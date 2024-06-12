@@ -5,9 +5,9 @@ build-backend = "setuptools.build_meta"
 
 # プロジェクトの設定を書きます。
 [project]
-name = "package_json_analyzer"
+name = "github_actions_analyzer"
 version = "0.0.1"
-description = "NPM package.json Analyzer"
+description = "GitHub Actions Workflow File Analyzer"
 requires-python = ">=3.10"
 authors = [{ name = "mkybdev" }]
 # 依存関係も書けます。
@@ -25,8 +25,8 @@ dependencies = [
 ]
 # インストール時のコマンドを書きます。
 [project.scripts]
-package_json_analyzer = "package_json_analyzer.main:main"
+github_actions_analyzer = "github_actions_analyzer.main:main"
 
 # どのフォルダをモジュールとして扱うかを書きます。
 [tool.setuptools]
-py-modules = ['package_json_analyzer']
+py-modules = ['github_actions_analyzer']

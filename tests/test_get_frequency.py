@@ -1,7 +1,7 @@
 import unittest
 import pandas as pd
-from package_json_analyzer.intersection.get_frequency import get_frequency
-from package_json_analyzer.intersection.get_duplication import get_duplication
+from github_actions_analyzer.intersection.get_frequency import get_frequency
+from github_actions_analyzer.intersection.get_duplication import get_duplication
 
 
 class TestGetFrequency(unittest.TestCase):

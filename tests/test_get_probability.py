@@ -1,6 +1,6 @@
 import unittest
 import pandas as pd
-from package_json_analyzer.cooccurrence.get_probability import get_probability
+from github_actions_analyzer.cooccurrence.get_probability import get_probability
 
 
 class TestGetProbability(unittest.TestCase):

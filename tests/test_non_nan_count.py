@@ -1,6 +1,6 @@
 import unittest
 import pandas as pd
-from package_json_analyzer.common.non_nan_count import non_nan_count
+from github_actions_analyzer.common.non_nan_count import non_nan_count
 
 
 class TestNonNanCount(unittest.TestCase):

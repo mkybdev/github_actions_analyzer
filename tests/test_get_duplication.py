@@ -1,7 +1,7 @@
 import unittest
 import pandas as pd
 
-from package_json_analyzer.intersection.get_duplication import get_duplication
+from github_actions_analyzer.intersection.get_duplication import get_duplication
 
 
 def sort_lists_in_dataframe(df: pd.DataFrame) -> pd.DataFrame:

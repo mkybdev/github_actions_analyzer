@@ -160,7 +160,7 @@ cython_debug/
 #.idea/
 
 .code-workspace
-package_json_analyzer.code-workspace
+github_actions_analyzer.code-workspace
 .vscode
 
 out/

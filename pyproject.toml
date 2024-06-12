@@ -22,6 +22,7 @@ dependencies = [
     'pyvis',
     'PyYAML',
     'yamlcore',
+    'graphviz',
 ]
 # インストール時のコマンドを書きます。
 [project.scripts]

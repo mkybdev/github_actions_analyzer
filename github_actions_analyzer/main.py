@@ -12,11 +12,13 @@ from .statistics import Statistics
 
 def main():
 
-    parser = argparse.ArgumentParser(description="Analyze package.json files.")
+    parser = argparse.ArgumentParser(
+        description="Analyze GitHub Actions workflow files."
+    )
     parser.add_argument(
         "target",
         type=str,
-        help="Path to the directory containing package.json files / Name of dumped dataset",
+        help="Path to the directory containing workflow files / Name of dumped dataset",
     )
     parser.add_argument(
         "-s", "--sample", type=int, default=-1, help="Number of samples to analyze"
@@ -29,7 +31,13 @@ def main():
         "--out",
         type=str,
         default=os.path.join(os.path.expanduser("~"), "Downloads"),
-        help="Output directory",
+        help="Output directory (default: ~/Downloads)",
+    )
+    parser.add_argument(
+        "-v",
+        "--visualize",
+        action="store_true",
+        help="Whether to visualize the workflow files",
     )
     args = parser.parse_args()
 
@@ -42,31 +50,13 @@ def main():
     else:
         logger.error("Output directory does not exist.")
 
-    rawData = load(args.target, args.sample, args.name, args.out)
+    rawData = load(args.target, args.sample, args.name, args.out, args.visualize)
     data = preprocess(rawData)
 
     Statistics(data).run()
 
-    # Intersection(data, ["dependencies", "devDependencies"]).run()
-    # Cooccurrence(
-    #     data, ["license", "keywords", "files", "dependencies", "devDependencies"]
-    # ).run()
-    # Clustering(data, ["scripts", "devDependencies", "dependencies", "keywords"]).run()
-
-    # run_all(
-    #     data,
-    #     intersection_list=["dependencies", "devDependencies"],
-    #     cooccurrence_list=[
-    #         "license",
-    #         "keywords",
-    #         "files",
-    #         "dependencies",
-    #         "devDependencies",
-    #     ],
-    #     clustering_list=["scripts", "devDependencies", "dependencies", "keywords"],
-    # )
-
     logger.info("\nAll analysis completed.\n")
+
 
 if __name__ == "__main__":
     main()

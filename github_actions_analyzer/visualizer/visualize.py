@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-
 output = ""
 
 
@@ -23,9 +21,7 @@ def asAttr(attr, val):
     return " [" + attr + '="' + escaped + '"]'
 
 
-def render(ast, name=None):
-    if name is None:
-        name = getID()
+def render(ast, name):
 
     lab = ""
     edges = []  # (from, to, attr)
@@ -62,10 +58,10 @@ def render(ast, name=None):
         out(src + " -> " + dest + attr + ";\n")
 
 
-def visualize(ast):
+def visualize(ast, name: str):
     out("digraph graphname {\n")
 
-    render(ast)
+    render(ast, name)
 
     out("}\n")
     global output

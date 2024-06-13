@@ -2,6 +2,7 @@ import json
 import os
 import pickle
 import random
+import re
 
 import graphviz
 import yaml  # type: ignore
@@ -85,18 +86,40 @@ def load(
         if os.path.exists(os.path.join(constants.OUTPUT_PATH, "visualize")):
             for file in os.listdir(os.path.join(constants.OUTPUT_PATH, "visualize")):
                 os.remove(os.path.join(constants.OUTPUT_PATH, "visualize", file))
-            os.rmdir(os.path.join(constants.OUTPUT_PATH, "visualize"))
         i = 1
+        err = 0
         for yml_data in tqdm(
-            loaded_data[:30],
+            loaded_data,
             desc=f"VISUALIZING {'UP TO 30' if len(loaded_data) > 30 else str(len(loaded_data))} {'SAMPLES' if constants.IS_SAMPLED else 'FILES'}",
         ):
-            gv = visualize(yml_data)
-            graphviz.Source(gv).render(
-                outfile=os.path.join(constants.OUTPUT_PATH, f"visualize/{i}.png"),
-                format="png",
-                cleanup=True,
-            )
+            gv = visualize(yml_data, str(i))
+            try:
+                s = graphviz.Source(
+                    gv,
+                    directory=os.path.join(constants.OUTPUT_PATH, "visualize"),
+                    format="png",
+                )
+                s.render(cleanup=True, quiet=True)
+            except:
+                err += 1
+                continue
+            if i == 30:
+                break
             i += 1
+        for file in os.listdir(os.path.join(constants.OUTPUT_PATH, "visualize")):
+            if re.match(r"Source.gv\.\d+\.png", file):
+                os.rename(
+                    os.path.join(constants.OUTPUT_PATH, "visualize", file),
+                    os.path.join(
+                        constants.OUTPUT_PATH, "visualize", file.split(".")[2] + ".png"
+                    ),
+                )
+            elif re.match(r"Source.gv.png", file):
+                os.rename(
+                    os.path.join(constants.OUTPUT_PATH, "visualize", file),
+                    os.path.join(constants.OUTPUT_PATH, "visualize", "1.png"),
+                )
+        if err > 0:
+            logger.info(f"Skipped {err} files, failed to visualize.")
 
     return loaded_data

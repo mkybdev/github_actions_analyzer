@@ -1,0 +1,32 @@
+name: Documentation
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'docs/**'
+  pull_request:
+    paths:
+      - 'docs/**'
+  release:
+    types:
+      - created
+
+env:
+  DEBIAN_FRONTEND: noninteractive
+
+jobs:
+  doc:
+    name: Documentation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/python-cache-requirements
+        with:
+          requirements: docs/requirements.txt
+
+      - name: Build doc
+        run: |
+          cd docs/
+          make html SPHINXOPTS="-W"

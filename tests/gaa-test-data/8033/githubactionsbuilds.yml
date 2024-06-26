@@ -1,0 +1,613 @@
+name: GitHubActionsBuilds
+
+on: push
+
+jobs:
+  generate_version_number:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    outputs:
+      build_number: ${{ github.ref == 'refs/heads/master' && steps.buildnumber.outputs.build_number || 1 }}
+    steps:
+    - name: Generate build number
+      if: github.ref == 'refs/heads/master'
+      id: buildnumber
+      uses: onyxmueller/build-tag-number@v1
+      with:
+        token: ${{secrets.github_token}}
+
+  build_docker:
+    needs: generate_version_number
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Login to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: devedse
+        password: ${{ secrets.DOCKERHUBTOKEN }}
+    - name: Set up QEMU
+      id: qemu
+      uses: docker/setup-qemu-action@v3
+      with:
+        image: tonistiigi/binfmt:latest
+        platforms: all
+    - name: Available platforms
+      run: echo ${{ steps.qemu.outputs.platforms }}
+    - name: Set up Docker Buildx
+      id: buildx
+      uses: docker/setup-buildx-action@v3
+    - name: Builder instance name
+      run: echo ${{ steps.buildx.outputs.name }}
+    - name: Available platforms
+      run: echo ${{ steps.buildx.outputs.platforms }}
+    - name: Set Image Tags
+      id: tags
+      run: |
+        VERSION=1.0.${{needs.generate_version_number.outputs.build_number}}
+        echo Version: $VERSION
+        echo github.ref: ${{ github.ref }}
+        echo github.actor: ${{ github.actor }}
+        echo branch name: ${GITHUB_REF#refs/heads/}
+        BRANCH_NAME=$(echo ${GITHUB_REF#refs/heads/} | sed 's/\//-/g')
+        echo parsed branch name: ${BRANCH_NAME}
+
+        echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+
+        if [[ "${{ github.ref }}" == 'refs/heads/master' ]]; then
+          echo "TAGS=-t devedse/devemazegeneratorcoreweb:${VERSION} -t devedse/devemazegeneratorcoreweb:latest" >> $GITHUB_OUTPUT
+        elif [[ "${{ github.actor }}" == 'dependabot[bot]' ]]; then
+          echo "TAGS=-t devedse/devemazegeneratorcoreweb:beta_${BRANCH_NAME}" >> $GITHUB_OUTPUT
+        else 
+          echo "TAGS=-t devedse/devemazegeneratorcoreweb:beta_${BRANCH_NAME} -t devedse/devemazegeneratorcoreweb:beta_nightly" >> $GITHUB_OUTPUT
+        fi
+    - name: Run Buildx
+      run: |
+        docker buildx build -f DeveMazeGeneratorCore.Web/Dockerfile --build-arg BUILD_VERSION=${{steps.tags.outputs.version}} --platform linux/arm64,linux/amd64 ${{steps.tags.outputs.tags}} ${{ (github.event_name != 'pull_request' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && '--push' || '' }} .
+
+
+  build_docker_monogame_blazor:
+    needs: generate_version_number
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Login to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: devedse
+        password: ${{ secrets.DOCKERHUBTOKEN }}
+    - name: Set up QEMU
+      id: qemu
+      uses: docker/setup-qemu-action@v3
+      with:
+        image: tonistiigi/binfmt:latest
+        platforms: all
+    - name: Available platforms
+      run: echo ${{ steps.qemu.outputs.platforms }}
+    - name: Set up Docker Buildx
+      id: buildx
+      uses: docker/setup-buildx-action@v3
+    - name: Builder instance name
+      run: echo ${{ steps.buildx.outputs.name }}
+    - name: Available platforms
+      run: echo ${{ steps.buildx.outputs.platforms }}
+    - name: Set Image Tags
+      id: tags
+      run: |
+        VERSION=1.0.${{needs.generate_version_number.outputs.build_number}}
+        echo Version: $VERSION
+        echo github.ref: ${{ github.ref }}
+        echo github.actor: ${{ github.actor }}
+        echo branch name: ${GITHUB_REF#refs/heads/}
+        BRANCH_NAME=$(echo ${GITHUB_REF#refs/heads/} | sed 's/\//-/g')
+        echo parsed branch name: ${BRANCH_NAME}
+
+        echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
+
+        if [[ "${{ github.ref }}" == 'refs/heads/master' ]]; then
+          echo "TAGS=-t devedse/devemazegeneratorcoremonogameblazor:${VERSION} -t devedse/devemazegeneratorcoremonogameblazor:latest" >> $GITHUB_OUTPUT
+        elif [[ "${{ github.actor }}" == 'dependabot[bot]' ]]; then
+          echo "TAGS=-t devedse/devemazegeneratorcoremonogameblazor:beta_${BRANCH_NAME}" >> $GITHUB_OUTPUT
+        else 
+          echo "TAGS=-t devedse/devemazegeneratorcoremonogameblazor:beta_${BRANCH_NAME} -t devedse/devemazegeneratorcoremonogameblazor:beta_nightly" >> $GITHUB_OUTPUT
+        fi
+    - name: Run Buildx
+      run: |
+        docker buildx build -f DeveMazeGeneratorCore.MonoGame.Blazor/Dockerfile --build-arg BUILD_VERSION=${{steps.tags.outputs.version}} --platform linux/arm64,linux/amd64 ${{steps.tags.outputs.tags}} ${{ (github.event_name != 'pull_request' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository)) && '--push' || '' }} .
+
+
+  build_linux:
+    needs: generate_version_number
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup .NET Core
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: 8.0.x
+    - name: Install dependencies
+      run: dotnet restore DeveMazeGeneratorCore.sln
+    - name: Build
+      run: dotnet build DeveMazeGeneratorCore.sln -c Release --no-restore /p:Version=1.0.${{needs.generate_version_number.outputs.build_number}}
+    - name: Test
+      run: dotnet test DeveMazeGeneratorCore.sln -c Release --no-restore --verbosity normal
+  
+  build_linux_consoleapp:
+    needs: generate_version_number
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup .NET Core
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: 8.0.x
+    - name: Publish Untrimmed
+      run: dotnet publish DeveMazeGeneratorCore.ConsoleApp/DeveMazeGeneratorCore.ConsoleApp.csproj -c Release -r linux-x64 -o DeveMazeGeneratorCore.ConsoleApp/bin/Release/net8.0/linux-x64/publishuntrimmed/ /p:PublishSingleFile=true /p:SelfContained=true /p:Version=1.0.${{needs.generate_version_number.outputs.build_number}}
+    - name: Publish Trimmed
+      run: dotnet publish DeveMazeGeneratorCore.ConsoleApp/DeveMazeGeneratorCore.ConsoleApp.csproj -c Release -r linux-x64 -o DeveMazeGeneratorCore.ConsoleApp/bin/Release/net8.0/linux-x64/publishtrimmed/ /p:PublishSingleFile=true /p:SelfContained=true /p:PublishTrimmed=true /p:TrimMode=full /p:Version=1.0.${{needs.generate_version_number.outputs.build_number}}
+    - name: Publish Trimmed AOT
+      run: dotnet publish DeveMazeGeneratorCore.ConsoleApp/DeveMazeGeneratorCore.ConsoleApp.csproj -c Release -r linux-x64 -o DeveMazeGeneratorCore.ConsoleApp/bin/Release/net8.0/linux-x64/publishtrimmedaot/ /p:PublishTrimmed=true /p:TrimMode=full /p:PublishAot=true /p:Version=1.0.${{needs.generate_version_number.outputs.build_number}}
+    - name: Copy output
+      shell: bash
+      run: |
+        mkdir BuildOutputConsole
+        mv ./DeveMazeGeneratorCore.ConsoleApp/bin/Release/net8.0/linux-x64/publishuntrimmed/DeveMazeGenerator.ConsoleApp ./BuildOutputConsole/DeveMazeGenerator.ConsoleApp.Untrimmed
+        mv ./DeveMazeGeneratorCore.ConsoleApp/bin/Release/net8.0/linux-x64/publishtrimmed/DeveMazeGenerator.ConsoleApp ./BuildOutputConsole/DeveMazeGenerator.ConsoleApp.Trimmed
+        mv ./DeveMazeGeneratorCore.ConsoleApp/bin/Release/net8.0/linux-x64/publishtrimmedaot/DeveMazeGenerator.ConsoleApp ./BuildOutputConsole/DeveMazeGenerator.ConsoleApp.TrimmedAot
+    - uses: actions/upload-artifact@v4
+      with:
+        name: DeveMazeGeneratorCore.ConsoleApp.Linux
+        path: BuildOutputConsole/*
+
+  build_windows_consoleapp:
+    needs: generate_version_number
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup .NET Core
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: 8.0.x
+    - name: Publish Untrimmed
+      run: dotnet publish DeveMazeGeneratorCore.ConsoleApp/DeveMazeGeneratorCore.ConsoleApp.csproj -c Release -r win-x64 -o DeveMazeGeneratorCore.ConsoleApp/bin/Release/net8.0/win-x64/publishuntrimmed/ /p:PublishSingleFile=true /p:SelfContained=true /p:Version=1.0.${{needs.generate_version_number.outputs.build_number}}
+    - name: Publish Trimmed
+      run: dotnet publish DeveMazeGeneratorCore.ConsoleApp/DeveMazeGeneratorCore.ConsoleApp.csproj -c Release -r win-x64 -o DeveMazeGeneratorCore.ConsoleApp/bin/Release/net8.0/win-x64/publishtrimmed/ /p:PublishSingleFile=true /p:SelfContained=true /p:PublishTrimmed=true /p:TrimMode=full /p:Version=1.0.${{needs.generate_version_number.outputs.build_number}}
+    - name: Publish Trimmed AOT
+      run: dotnet publish DeveMazeGeneratorCore.ConsoleApp/DeveMazeGeneratorCore.ConsoleApp.csproj -c Release -r win-x64 -o DeveMazeGeneratorCore.ConsoleApp/bin/Release/net8.0/win-x64/publishtrimmedaot/ /p:PublishTrimmed=true /p:TrimMode=full /p:PublishAot=true /p:Version=1.0.${{needs.generate_version_number.outputs.build_number}}
+    - name: Copy output
+      shell: bash
+      run: |
+        mkdir BuildOutputConsole
+        mv ./DeveMazeGeneratorCore.ConsoleApp/bin/Release/net8.0/win-x64/publishuntrimmed/DeveMazeGenerator.ConsoleApp.exe ./BuildOutputConsole/DeveMazeGenerator.ConsoleApp.Untrimmed.exe
+        mv ./DeveMazeGeneratorCore.ConsoleApp/bin/Release/net8.0/win-x64/publishtrimmed/DeveMazeGenerator.ConsoleApp.exe ./BuildOutputConsole/DeveMazeGenerator.ConsoleApp.Trimmed.exe
+        mv ./DeveMazeGeneratorCore.ConsoleApp/bin/Release/net8.0/win-x64/publishtrimmedaot/DeveMazeGenerator.ConsoleApp.exe ./BuildOutputConsole/DeveMazeGenerator.ConsoleApp.TrimmedAot.exe
+    - uses: actions/upload-artifact@v4
+      with:
+        name: DeveMazeGeneratorCore.ConsoleApp.Windows
+        path: BuildOutputConsole/*.exe
+
+  build_windows:
+    needs: generate_version_number
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup .NET Core
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: 8.0.x
+    - uses: actions/setup-java@v4
+      with:
+        distribution: 'zulu'
+        java-version: '19' # The JDK version to make available on the path.
+        java-package: jdk # (jre, jdk, or jdk+fx) - defaults to jdk
+        architecture: x64 # (x64 or x86) - defaults to x64
+    - name: Install tools
+      run: |
+        dotnet tool install --global dotnet-sonarscanner
+        dotnet tool install --global dotnet-reportgenerator-globaltool
+    - name: Install dependencies
+      run: dotnet restore DeveMazeGeneratorCore.sln
+    - name: SonarQube begin
+      if: github.actor != 'dependabot[bot]'
+      run: dotnet-sonarscanner begin /k:"DeveMazeGeneratorCore" /o:"devedse-github" /d:sonar.host.url="https://sonarcloud.io" /d:sonar.login=${{secrets.SONARQUBETOKEN}} /d:sonar.cs.opencover.reportsPaths=".\DeveMazeGeneratorCore.Tests\TestResults\Coverage\coverage.opencover.xml" /d:sonar.coverage.exclusions="DeveMazeGeneratorCore.ConsoleApp/**/*.cs,DeveMazeGeneratorCore.Tests/**/*.cs,DeveMazeGeneratorCore.Web/wwwroot/divisionmaze/**/*.js"
+    - name: Build
+      run: dotnet build DeveMazeGeneratorCore.sln -c Release --no-restore /p:Version=1.0.${{needs.generate_version_number.outputs.build_number}}
+    - name: Test
+      run: dotnet test DeveMazeGeneratorCore.sln --verbosity normal --no-build -c Release --collect:"XPlat Code Coverage" -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=cobertura,opencover
+    - name: SonarQube end
+      if: github.actor != 'dependabot[bot]'
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: dotnet-sonarscanner end /d:sonar.login=${{secrets.SONARQUBETOKEN}}
+    - name: Pack
+      run: dotnet pack DeveMazeGeneratorCore\DeveMazeGeneratorCore.csproj --verbosity normal --no-build -c Release /p:Version=1.0.${{needs.generate_version_number.outputs.build_number}}
+    - name: Run CodeCov
+      uses: codecov/codecov-action@v4
+      with:
+        directory: ./DeveMazeGeneratorCore.Tests/TestResults
+        fail_ci_if_error: true # optional (default = false)
+        verbose: true # optional (default = false)
+      env:
+        CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+    - name: Run GoPackage.ps1 script
+      run: .\Scripts\GoPackage.ps1
+      shell: pwsh
+
+
+    - uses: actions/upload-artifact@v4
+      with:
+        name: DeveMazeGeneratorCore7z
+        path: ./Scripts/Output/DeveMazeGeneratorCore.7z
+    - uses: actions/upload-artifact@v4
+      with:
+        name: DeveMazeGeneratorCoreZip
+        path: ./Scripts/Output/DeveMazeGeneratorCore.zip
+    - uses: actions/upload-artifact@v4
+      with:
+        name: DeveMazeGeneratorCoreNuGet
+        path: |
+          ./DeveMazeGeneratorCore/bin/Release/*.nupkg
+          ./DeveMazeGeneratorCore/bin/Release/*.snupkg
+
+  build_linux_monogame_desktopgl:
+    needs: generate_version_number
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup .NET Core
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: 8.0.x
+    - name: Install dependencies
+      run: dotnet restore DeveMazeGeneratorCore.sln
+    - name: Build
+      run: dotnet build DeveMazeGeneratorCore.sln -c Release --no-restore /p:Version=1.0.${{needs.generate_version_number.outputs.build_number}}
+    - name: Test
+      run: dotnet test DeveMazeGeneratorCore.sln --no-restore --verbosity normal
+    - name: Publish
+      run: dotnet publish ./DeveMazeGeneratorCore.MonoGame.DesktopGL/DeveMazeGeneratorCore.MonoGame.DesktopGL.csproj -r linux-x64 -c Release /p:PublishSingleFile=true /p:SelfContained=true /p:IncludeNativeLibrariesForSelfExtract=true /p:PublishTrimmed=false /p:Version=1.0.${{needs.generate_version_number.outputs.build_number}}
+    - name: Copy files that are missing for some reason
+      run: |
+        # not needed on linux as it seems
+        ls -R DeveMazeGeneratorCore.MonoGame.DesktopGL/bin/Release/net8.0/linux-x64
+        ls -R DeveMazeGeneratorCore.MonoGame.DesktopGL/bin/Release/net8.0/linux-x64/publish
+      shell: bash
+    - name: targz output
+      run: |
+        export GZIP=-9
+        tar cvzf DeveMazeGeneratorCore.MonoGame.DesktopGL_linux-x64.tar.gz -C DeveMazeGeneratorCore.MonoGame.DesktopGL/bin/Release/net8.0/linux-x64/publish .
+    - name: 7zip output
+      run: |
+        7z a -t7z -m0=LZMA2 -mmt=on -mx9 -md=1536m -mfb=273 -ms=on -mqs=on -sccUTF-8 "DeveMazeGeneratorCore.MonoGame.DesktopGL_linux-x64.7z" "./DeveMazeGeneratorCore.MonoGame.DesktopGL/bin/Release/net8.0/linux-x64/publish/*" '-x!*.pdb'
+    - uses: actions/upload-artifact@v4
+      with:
+        name: DeveMazeGeneratorCore.MonoGame.DesktopGL_linux-x64
+        path: DeveMazeGeneratorCore.MonoGame.DesktopGL_linux-x64.tar.gz
+
+  # AppIcon is missing when building windows application on linux
+  # So don't use this build
+  # See: https://github.com/dotnet/runtime/issues/3828
+  build_windows_monogame_desktopgl_onlinux:
+    needs: generate_version_number
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup .NET Core
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: 8.0.x
+    - name: Install dependencies
+      run: dotnet restore DeveMazeGeneratorCore.sln
+    - name: Build
+      run: dotnet build DeveMazeGeneratorCore.sln -c Release --no-restore /p:Version=1.0.${{needs.generate_version_number.outputs.build_number}}
+    - name: Test
+      run: dotnet test DeveMazeGeneratorCore.sln --no-restore --verbosity normal
+    - name: Publish
+      run: dotnet publish ./DeveMazeGeneratorCore.MonoGame.DesktopGL/DeveMazeGeneratorCore.MonoGame.DesktopGL.csproj -r win-x64 -c Release /p:PublishSingleFile=true /p:SelfContained=true /p:IncludeNativeLibrariesForSelfExtract=true /p:PublishTrimmed=false /p:Version=1.0.${{needs.generate_version_number.outputs.build_number}}
+    - name: Copy files that are missing for some reason
+      run: |
+        # not needed on linux as it seems
+        ls -R DeveMazeGeneratorCore.MonoGame.DesktopGL/bin/Release/net8.0/win-x64
+        cp DeveMazeGeneratorCore.MonoGame.DesktopGL/bin/Release/net8.0/win-x64/SDL2.dll DeveMazeGeneratorCore.MonoGame.DesktopGL/bin/Release/net8.0/win-x64/publish/
+        cp -R DeveMazeGeneratorCore.MonoGame.DesktopGL/bin/Release/net8.0/win-x64/Content/. DeveMazeGeneratorCore.MonoGame.DesktopGL/bin/Release/net8.0/win-x64/publish/Content/
+        ls -R DeveMazeGeneratorCore.MonoGame.DesktopGL/bin/Release/net8.0/win-x64/publish
+      shell: bash
+    - name: targz output
+      run: |
+        export GZIP=-9
+        tar cvzf DeveMazeGeneratorCore.MonoGame.DesktopGL_win-x64_onlinux.tar.gz -C DeveMazeGeneratorCore.MonoGame.DesktopGL/bin/Release/net8.0/win-x64/publish .
+    - name: 7zip output
+      run: |
+        7z a -t7z -m0=LZMA2 -mmt=on -mx9 -md=1536m -mfb=273 -ms=on -mqs=on -sccUTF-8 "DeveMazeGeneratorCore.MonoGame.DesktopGL_win-x64_onlinux.7z" "./DeveMazeGeneratorCore.MonoGame.DesktopGL/bin/Release/net8.0/win-x64/publish/*" '-x!*.pdb'
+    - uses: actions/upload-artifact@v4
+      with:
+        name: DeveMazeGeneratorCore.MonoGame.DesktopGL_win-x64_onlinuxtargz
+        path: DeveMazeGeneratorCore.MonoGame.DesktopGL_win-x64_onlinux.tar.gz
+    - uses: actions/upload-artifact@v4
+      with:
+        name: DeveMazeGeneratorCore.MonoGame.DesktopGL_win-x64_onlinux
+        path: DeveMazeGeneratorCore.MonoGame.DesktopGL_win-x64_onlinux.7z
+
+  build_windows_monogame_desktopgl:
+    needs: generate_version_number
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup .NET Core
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: 8.0.x
+    - name: Install dependencies
+      run: dotnet restore DeveMazeGeneratorCore.sln
+    - name: Build
+      run: dotnet build DeveMazeGeneratorCore.sln -c Release --no-restore /p:Version=1.0.${{needs.generate_version_number.outputs.build_number}}
+    - name: Test
+      run: dotnet test DeveMazeGeneratorCore.sln --no-restore --verbosity normal
+    - name: Publish
+      run: dotnet publish ./DeveMazeGeneratorCore.MonoGame.DesktopGL/DeveMazeGeneratorCore.MonoGame.DesktopGL.csproj -r win-x64 -c Release /p:PublishSingleFile=true /p:SelfContained=true /p:IncludeNativeLibrariesForSelfExtract=true /p:PublishTrimmed=false /p:Version=1.0.${{needs.generate_version_number.outputs.build_number}}
+    - name: Copy files that are missing for some reason
+      run: |
+        ls -R DeveMazeGeneratorCore.MonoGame.DesktopGL/bin/Release/net8.0/win-x64
+        cp DeveMazeGeneratorCore.MonoGame.DesktopGL/bin/Release/net8.0/win-x64/SDL2.dll DeveMazeGeneratorCore.MonoGame.DesktopGL/bin/Release/net8.0/win-x64/publish/
+        cp -R DeveMazeGeneratorCore.MonoGame.DesktopGL/bin/Release/net8.0/win-x64/Content/. DeveMazeGeneratorCore.MonoGame.DesktopGL/bin/Release/net8.0/win-x64/publish/Content/
+        ls -R DeveMazeGeneratorCore.MonoGame.DesktopGL/bin/Release/net8.0/win-x64/Publish
+      shell: bash
+    - name: 7zip output
+      run: |
+        7z a -t7z -m0=LZMA2 -mmt=on -mx9 -md=1536m -mfb=273 -ms=on -mqs=on -sccUTF-8 "DeveMazeGeneratorCore.MonoGame.DesktopGL_win-x64.7z" "./DeveMazeGeneratorCore.MonoGame.DesktopGL/bin/Release/net8.0/win-x64/Publish/*" '-x!*.pdb'
+    - uses: actions/upload-artifact@v4
+      with:
+        name: DeveMazeGeneratorCore.MonoGame.DesktopGL_win-x64
+        path: DeveMazeGeneratorCore.MonoGame.DesktopGL_win-x64.7z
+
+  build_windows_monogame_windowsdx:
+    needs: generate_version_number
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup .NET Core
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: 8.0.x
+    - name: Install dependencies
+      run: dotnet restore DeveMazeGeneratorCore.sln
+    - name: Build
+      run: dotnet build DeveMazeGeneratorCore.sln -c Release --no-restore /p:Version=1.0.${{needs.generate_version_number.outputs.build_number}}
+    - name: Test
+      run: dotnet test DeveMazeGeneratorCore.sln --no-restore --verbosity normal
+    - name: Publish
+      run: dotnet publish ./DeveMazeGeneratorCore.MonoGame.WindowsDX\DeveMazeGeneratorCore.MonoGame.WindowsDX.csproj -r win-x64 -c Release /p:PublishSingleFile=true /p:SelfContained=true /p:IncludeNativeLibrariesForSelfExtract=true /p:PublishTrimmed=false /p:Version=1.0.${{needs.generate_version_number.outputs.build_number}}
+    - name: Copy files that are missing for some reason
+      run: |
+        ls -R DeveMazeGeneratorCore.MonoGame.WindowsDX/bin/Release/net8.0-windows/win-x64
+        cp -R DeveMazeGeneratorCore.MonoGame.WindowsDX/bin/Release/net8.0-windows/win-x64/Content/. DeveMazeGeneratorCore.MonoGame.WindowsDX/bin/Release/net8.0-windows/win-x64/publish/Content/
+        ls -R DeveMazeGeneratorCore.MonoGame.WindowsDX/bin/Release/net8.0-windows/win-x64/Publish
+      shell: bash
+    - name: 7zip output
+      run: |
+        7z a -t7z -m0=LZMA2 -mmt=on -mx9 -md=1536m -mfb=273 -ms=on -mqs=on -sccUTF-8 "DeveMazeGeneratorCore.MonoGame.WindowsDX_win-x64.7z" "./DeveMazeGeneratorCore.MonoGame.WindowsDX/bin/Release/net8.0-windows/win-x64/Publish/*" '-x!*.pdb'
+    - uses: actions/upload-artifact@v4
+      with:
+        name: DeveMazeGeneratorCore.MonoGame.WindowsDX_win-x64
+        path: DeveMazeGeneratorCore.MonoGame.WindowsDX_win-x64.7z
+
+
+  build_windows_Android:
+    needs: generate_version_number
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup .NET Core
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: 8.0.x
+    - name: Install workload android
+      run: |
+        dotnet workload install android
+    - name: Add msbuild to PATH
+      uses: microsoft/setup-msbuild@v1.3
+    - name: Set Android version
+      uses: damienaicheh/update-android-version-manifest-action@v1.0.0
+      with:
+        android-manifest-path: ./DeveMazeGeneratorCore.MonoGame.Android/AndroidManifest.xml
+        version-name: 1.0.${{needs.generate_version_number.outputs.build_number}}
+        version-code: ${{needs.generate_version_number.outputs.build_number}}
+        print-file: true
+    - name: Restore NuGet packages
+      run: |
+        nuget restore DeveMazeGeneratorCore/DeveMazeGeneratorCore.csproj
+        nuget restore DeveMazeGeneratorCore.MonoGame.Core/DeveMazeGeneratorCore.MonoGame.Core.csproj
+        nuget restore DeveMazeGeneratorCore.MonoGame.Android/DeveMazeGeneratorCore.MonoGame.Android.csproj
+    - name: Build Android
+      run: |
+        #dotnet build DeveMazeGeneratorCore.MonoGame.Android/DeveMazeGeneratorCore.MonoGame.Android.csproj -c Release --no-restore /p:Version=1.0.${{needs.generate_version_number.outputs.build_number}}
+        #msbuild /p:Version=1.0.${{needs.generate_version_number.outputs.build_number}} /p:AndroidBuildApplicationPackage=true /p:Configuration=Release /p:AndroidPackageFormat=aab /p:AndroidKeyStore=true /p:AndroidSigningKeyAlias=DevedseCert /p:AndroidSigningKeyPass=${{secrets.ANDROIDKEYSTOREPASSWORD}} /p:AndroidSigningKeyStore=DevedseCert.keystore /p:AndroidSigningStorePass=${{secrets.ANDROIDKEYSTOREPASSWORD}} DeveMazeGeneratorCore.MonoGame.Android\DeveMazeGeneratorCore.MonoGame.Android.csproj
+        msbuild /p:Version=1.0.${{needs.generate_version_number.outputs.build_number}} /p:AndroidBuildApplicationPackage=true /p:Configuration=Release /p:AndroidPackageFormat=aab ${{ github.actor != 'dependabot[bot]' && format('/p:AndroidKeyStore=true /p:AndroidSigningKeyAlias=DevedseCert /p:AndroidSigningKeyPass={0} /p:AndroidSigningKeyStore=DevedseCert.keystore /p:AndroidSigningStorePass={0}', secrets.ANDROIDKEYSTOREPASSWORD) || '' }} DeveMazeGeneratorCore.MonoGame.Android\DeveMazeGeneratorCore.MonoGame.Android.csproj
+    - name: dotnet test
+      run: dotnet test DeveMazeGeneratorCore.Tests/DeveMazeGeneratorCore.Tests.csproj -c Release --verbosity normal
+    # - name: Package sources
+    #   run: |
+    #     7z a -t7z -m0=LZMA2 -mmt=on -mx9 -md=1536m -mfb=273 -ms=on -mqs=on -sccUTF-8 "./Scripts/Output/DeveMazeGeneratorCore.MonoGame.Android.7z" "DeveMazeGeneratorCore.MonoGame.Android\*" '-x!*.pdb'
+    #   shell: powershell
+    - uses: actions/upload-artifact@v4
+      with:
+        name: DeveMazeGeneratorCore.MonoGame.Android_aab
+        path: ./DeveMazeGeneratorCore.MonoGame.Android/bin/Release/net8.0-android/devemazegeneratorcoremonogame_android.devemazegeneratorcoremonogame_android-Signed.aab
+
+
+  build_windows_AndroidForFireStick:
+    needs: generate_version_number
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup .NET Core
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: 8.0.x
+    - name: Install workload android
+      run: |
+        dotnet workload install android
+    - name: Add msbuild to PATH
+      uses: microsoft/setup-msbuild@v1.3
+    - name: Set Android version
+      uses: damienaicheh/update-android-version-manifest-action@v1.0.0
+      with:
+        android-manifest-path: ./DeveMazeGeneratorCore.MonoGame.Android/AndroidManifest.xml
+        version-name: 1.0.${{needs.generate_version_number.outputs.build_number}}
+        version-code: ${{needs.generate_version_number.outputs.build_number}}
+        print-file: true
+    - name: Restore NuGet packages
+      run: |
+        nuget restore DeveMazeGeneratorCore/DeveMazeGeneratorCore.csproj
+        nuget restore DeveMazeGeneratorCore.MonoGame.Core/DeveMazeGeneratorCore.MonoGame.Core.csproj
+        nuget restore DeveMazeGeneratorCore.MonoGame.Android/DeveMazeGeneratorCore.MonoGame.Android.csproj
+    - name: Build Android
+      run: |
+        #dotnet build DeveMazeGeneratorCore.MonoGame.Android/DeveMazeGeneratorCore.MonoGame.Android.csproj -c Release --no-restore /p:Version=1.0.${{needs.generate_version_number.outputs.build_number}}
+        #msbuild /p:Version=1.0.${{needs.generate_version_number.outputs.build_number}} /p:AndroidBuildApplicationPackage=true /p:Configuration=Release /p:AndroidPackageFormat=apk /p:AndroidKeyStore=true /p:AndroidSigningKeyAlias=DevedseCert /p:AndroidSigningKeyPass=${{secrets.ANDROIDKEYSTOREPASSWORD}} /p:AndroidSigningKeyStore=DevedseCert.keystore /p:AndroidSigningStorePass=${{secrets.ANDROIDKEYSTOREPASSWORD}} DeveMazeGeneratorCore.MonoGame.Android\DeveMazeGeneratorCore.MonoGame.Android.csproj
+        msbuild /p:Version=1.0.${{needs.generate_version_number.outputs.build_number}} /p:AndroidBuildApplicationPackage=true /p:Configuration=Release /p:AndroidPackageFormat=apk ${{ github.actor != 'dependabot[bot]' && format('/p:AndroidKeyStore=true /p:AndroidSigningKeyAlias=DevedseCert /p:AndroidSigningKeyPass={0} /p:AndroidSigningKeyStore=DevedseCert.keystore /p:AndroidSigningStorePass={0}', secrets.ANDROIDKEYSTOREPASSWORD) || '' }} DeveMazeGeneratorCore.MonoGame.Android\DeveMazeGeneratorCore.MonoGame.Android.csproj
+    - name: dotnet test
+      run: dotnet test DeveMazeGeneratorCore.Tests/DeveMazeGeneratorCore.Tests.csproj -c Release --verbosity normal
+    # - name: Package sources
+    #   run: |
+    #     7z a -t7z -m0=LZMA2 -mmt=on -mx9 -md=1536m -mfb=273 -ms=on -mqs=on -sccUTF-8 "./Scripts/Output/DeveMazeGeneratorCore.MonoGame.Android.7z" "DeveMazeGeneratorCore.MonoGame.Android\*" '-x!*.pdb'
+    #   shell: powershell
+    - uses: actions/upload-artifact@v4
+      with:
+        name: DeveMazeGeneratorCore.MonoGame.Android_apk
+        path: ./DeveMazeGeneratorCore.MonoGame.Android/bin/Release/net8.0-android/devemazegeneratorcoremonogame_android.devemazegeneratorcoremonogame_android-Signed.apk
+
+
+  release_github:
+    needs: [
+      generate_version_number,
+      build_windows_consoleapp,
+      build_linux_consoleapp,
+      build_windows,
+      build_linux,
+      build_docker,
+      build_linux_monogame_desktopgl,
+      build_windows_monogame_desktopgl_onlinux,
+      build_windows_monogame_desktopgl,
+      build_windows_monogame_windowsdx,
+      build_windows_Android,
+      build_windows_AndroidForFireStick]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    if: github.ref == 'refs/heads/master'
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: ./artifacts/
+
+    - name: Display structure of downloaded files
+      run: |
+        cd ./artifacts/
+        ls -R
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # This token is provided by Actions, you do not need to create your own token
+      with:
+        tag_name: 1.0.${{needs.generate_version_number.outputs.build_number}}
+        release_name: 1.0.${{needs.generate_version_number.outputs.build_number}}
+        body: |
+          ${{ github.event.head_commit.message }}
+        draft: false
+        prerelease: false
+    - name: Release
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: 1.0.${{needs.generate_version_number.outputs.build_number}}
+        files: |
+          ./artifacts/DeveMazeGeneratorCore7z/DeveMazeGeneratorCore.7z
+          ./artifacts/DeveMazeGeneratorCoreZip/DeveMazeGeneratorCore.zip
+          ./artifacts/DeveMazeGeneratorCoreNuGet/*.nupkg
+          ./artifacts/DeveMazeGeneratorCoreNuGet/*.snupkg
+          ./artifacts/DeveMazeGeneratorCore.MonoGame.DesktopGL_linux-x64/DeveMazeGeneratorCore.MonoGame.DesktopGL_linux-x64.tar.gz
+          ./artifacts/DeveMazeGeneratorCore.MonoGame.DesktopGL_win-x64_onlinux/DeveMazeGeneratorCore.MonoGame.DesktopGL_win-x64_onlinux.7z
+          ./artifacts/DeveMazeGeneratorCore.MonoGame.DesktopGL_win-x64/DeveMazeGeneratorCore.MonoGame.DesktopGL_win-x64.7z
+          ./artifacts/DeveMazeGeneratorCore.MonoGame.WindowsDX_win-x64/DeveMazeGeneratorCore.MonoGame.WindowsDX_win-x64.7z
+          ./artifacts/DeveMazeGeneratorCore.MonoGame.Android_aab/devemazegeneratorcoremonogame_android.devemazegeneratorcoremonogame_android-Signed.aab
+          ./artifacts/DeveMazeGeneratorCore.MonoGame.Android_apk/devemazegeneratorcoremonogame_android.devemazegeneratorcoremonogame_android-Signed.apk
+          ./artifacts/DeveMazeGeneratorCore.ConsoleApp/DeveMazeGenerator.ConsoleApp.Untrimmed.exe
+          ./artifacts/DeveMazeGeneratorCore.ConsoleApp/DeveMazeGenerator.ConsoleApp.Trimmed.exe
+          ./artifacts/DeveMazeGeneratorCore.ConsoleApp/DeveMazeGenerator.ConsoleApp.TrimmedAot.exe
+          ./artifacts/DeveMazeGeneratorCore.ConsoleApp/DeveMazeGenerator.ConsoleApp.Untrimmed
+          ./artifacts/DeveMazeGeneratorCore.ConsoleApp/DeveMazeGenerator.ConsoleApp.Trimmed
+          ./artifacts/DeveMazeGeneratorCore.ConsoleApp/DeveMazeGenerator.ConsoleApp.TrimmedAot
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+
+  release_nuget:
+    needs: [generate_version_number, build_windows, build_linux, build_docker]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/master'
+    steps:
+    - name: Download all artifacts
+      uses: actions/download-artifact@v4
+      with:
+        name: DeveMazeGeneratorCoreNuGet
+        path: ./artifacts/DeveMazeGeneratorCoreNuGet/
+    - name: Push NuGet
+      run: dotnet nuget push ./artifacts/DeveMazeGeneratorCoreNuGet/DeveMazeGeneratorCore.1.0.${{needs.generate_version_number.outputs.build_number}}.nupkg -k ${{ secrets.NUGETTOKEN }} -s https://api.nuget.org/v3/index.json
+
+  codeqlanalyze:
+    runs-on: windows-latest
+    needs: generate_version_number
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [ 'csharp', 'javascript' ]
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Setup .NET Core
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: 8.0.x
+    - name: Install workload android
+      run: |
+        dotnet workload install android
+
+    - name: Run tree
+      run: tree /A
+
+    # Initializes the CodeQL tools for scanning.
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v3
+      with:
+        languages: ${{ matrix.language }}
+
+    # Autobuild attempts to build any compiled languages  (C/C++, C#, or Java).
+    - name: Autobuild
+      uses: github/codeql-action/autobuild@v3
+
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v3
+      with:
+        output: './artifacts'
+  
+    - name: Run tree2
+      run: |
+        tree /A
+        cd
+  
+    - name: Upload CodeQL Database as Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: CodeQLDatabase-${{ matrix.language }}
+        path: ${{ runner.temp }}/codeql_databases/${{ matrix.language }}.zip

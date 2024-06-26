@@ -1,0 +1,47 @@
+# This workflow will install Python dependencies, run tests and lint with a single version of Python
+# For more information see: https://help.github.com/actions/language-and-framework-guides/using-python-with-github-actions
+
+name: ostap 
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+jobs:
+  test_docker:
+     strategy:
+      matrix:
+        build: [1,2]
+        include:
+            - { build: 1, lcg: dev3/latest, platform: x86_64-el9-gcc13-opt }
+            - { build: 2, lcg: dev3/latest, platform: x86_64-el9-clang16-opt }
+      fail-fast: false
+     runs-on: ubuntu-latest 
+     steps:
+       - uses: actions/checkout@v2
+       - name: Install dependencies
+         run: |
+          ls 
+       - uses: cvmfs-contrib/github-action-cvmfs@main
+       - name: Build
+         run: |
+          ls /cvmfs/sft.cern.ch 
+          docker  create -v  /osya --name ostap-build    gitlab-registry.cern.ch/lhcb-docker/os-base/alma9-devel:latest 
+          docker cp  /home/runner/work/ostap/ostap/  ostap-build:/osya
+          docker run      -v /cvmfs:/cvmfs:shared -u:0  --volumes-from ostap-build  --security-opt seccomp=unconfined gitlab-registry.cern.ch/lhcb-docker/os-base/alma9-devel:latest /bin/bash -c "cd /osya/ostap  && ./.aux/build_with_lcg ${{ matrix.lcg }} ${{ matrix.platform }}"
+       - name: Test
+         run: |
+          ls /cvmfs/sft.cern.ch 
+          docker run      -v /cvmfs:/cvmfs:shared -u:0  --volumes-from ostap-build  --security-opt seccomp=unconfined gitlab-registry.cern.ch/lhcb-docker/os-base/alma9-devel:latest /bin/bash -c "cd /osya/ostap  && ./.aux/test_with_lcg  ${{ matrix.lcg }}  ${{ matrix.platform }}"
+       - name: copy artifacts
+         if: always()
+         run: |
+            docker cp  ostap-build:/osya/ostap/build .
+       - name: Archive production artifacts
+         if: always()
+         uses: actions/upload-artifact@v2
+         with:
+          name: test
+          path: build/Testing
+

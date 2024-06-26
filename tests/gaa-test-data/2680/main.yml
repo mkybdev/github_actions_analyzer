@@ -1,0 +1,20 @@
+name: CI
+
+on: [push]
+
+jobs:
+  build:
+
+    runs-on: macOS-latest
+    
+    steps:
+    - uses: actions/checkout@v2
+    - name: Run tests
+      run: |
+        swift package generate-xcodeproj
+        xcodebuild test -scheme Table-Package -destination platform="macOS" -enableCodeCoverage YES
+    - name: Upload Coverage
+      uses: codecov/codecov-action@v1
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        

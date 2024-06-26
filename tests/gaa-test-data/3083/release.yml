@@ -1,0 +1,34 @@
+name: Release
+on:
+  push:
+    tags:
+    - 'v*'
+    - '!v*-alpha'
+    - '!v*-beta'
+
+jobs:
+
+  release:
+    name: Release
+    runs-on: ubuntu-latest
+
+    steps:
+
+    - name: setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: 1.22.x
+      id: go
+
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v4
+
+    - name: release
+      uses: goreleaser/goreleaser-action@v6
+      with:
+        workdir: ./cmd/gobuild
+        version: latest
+        args: release
+      env:
+        GITHUB_TOKEN: ${{ secrets.HOMEBREW }}
+

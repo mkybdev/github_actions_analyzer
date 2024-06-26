@@ -1,0 +1,32 @@
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+
+    runs-on: macos-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: sdks
+      run: xcodebuild -showsdks
+    - name: destinations-ios
+      run: xcodebuild -workspace SQLiteMigrationManager.xcworkspace -scheme "SQLiteMigrationManager iOS" -showdestinations
+    - name: destinations-macos
+      run: xcodebuild -workspace SQLiteMigrationManager.xcworkspace -scheme "SQLiteMigrationManager macOS" -showdestinations
+    - name: cache
+      uses: actions/cache@v2
+      with:
+        path: Carthage
+        key: ${{ runner.os }}-carthage-${{ hashFiles('**/Cartfile.resolved') }}
+        restore-keys: |
+          ${{ runner.os }}-carthage-
+    - name: setup
+      run: ./bin/setup
+    - name: tests
+      run: ./bin/run-tests

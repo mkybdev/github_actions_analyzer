@@ -1,0 +1,117 @@
+name: Test the package
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  ci-test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rust: stable
+          - rust: beta
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install ubuntu dependencies
+        run: |
+          sudo apt-get update && sudo apt-get install --no-install-recommends -y \
+            llvm-dev \
+            libcfitsio-dev \
+            pkg-config \
+            libssl-dev \
+            python3
+
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{matrix.rust}}
+          override: true
+          components: rustfmt, clippy
+
+      - name: Test the code
+        run: python3 ./bin/test --rust-version ${{matrix.rust}} --test all
+
+  macos-test:
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - rust: stable
+          - rust: beta
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          brew install cfitsio python3
+
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: ${{matrix.rust}}
+          override: true
+          components: rustfmt, clippy
+
+      - name: Test the code
+        run: python3 ./bin/test --rust-version ${{matrix.rust}} --test all
+
+  linux-armv7:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: true
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+          target: armv7-unknown-linux-gnueabihf
+
+      # workaround https://github.com/cross-rs/cross/issues/1177
+      - name: Install cargo cross
+        run: |
+          cargo install cross --locked
+
+      - name: Test the code
+        uses: actions-rs/cargo@v1
+        with:
+          use-cross: true
+          command: test
+          args: --target armv7-unknown-linux-gnueabihf --manifest-path fitsio/Cargo.toml
+
+  windows-test:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Set up msys2
+        uses: msys2/setup-msys2@v2
+
+      - name: Install dependencies
+        shell: msys2 {0}
+        run: |
+          pacman -S --noconfirm \
+          mingw64/mingw-w64-x86_64-cfitsio \
+          mingw64/mingw-w64-x86_64-pkg-config \
+          mingw64/mingw-w64-x86_64-rust
+
+      - name: Run the tests
+        shell: msys2 {0}
+        run: |
+          cargo test -p fitsio

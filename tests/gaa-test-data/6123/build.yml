@@ -1,0 +1,75 @@
+name: Build .unitypackage
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build_ios:
+    runs-on: macOS-10.15
+    env:
+      OUTPUT_PATH: ./Build
+
+    steps:
+    - uses: actions/checkout@master
+
+    - uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '2.6'
+
+    - name: Install xcpretty
+      run: gem install xcpretty
+
+    - name: Build iOS static libraries
+      run: ./PluginDependencies/iOSPlugin/Scripts/build
+
+    - name: Upload library artifacts
+      uses: actions/upload-artifact@v2
+      with:
+        name: ios-plugin-library
+        path: |
+          ./Build/libUnityBuySDKPlugin.a
+
+  package_unity:
+    runs-on: ubuntu-latest
+    needs: build_ios
+    env:
+      UNITY_PACKAGE: shopify-buy.unitypackage
+
+    steps:
+    - uses: actions/checkout@master
+
+    - uses: actions/download-artifact@v2
+      with:
+        name: ios-plugin-library
+        path: ./Assets/Shopify/Plugins/iOS/Shopify/.
+
+    - uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '2.6'
+
+    - name: Generate GraphQL Objects
+      run: |
+        ./scripts/generate.sh github
+
+    - name: Move over READMEs into doc generation
+      run: |
+        cat ./scripts/docs/temp_landing.md > ./scripts/docs/landing.md
+        cat ./EXAMPLES.md >> ./scripts/docs/landing.md
+
+    - uses: mattnotmitt/doxygen-action@v1
+      with:
+        doxyfile-path: './Doxyfile'
+
+    - name: Copy Examples to Shopify/examples.txt
+      run: cp ./EXAMPLES.md ./Assets/Shopify/examples.txt
+
+
+
+
+
+
+
+
+
+

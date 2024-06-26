@@ -1,0 +1,46 @@
+name: Deploy
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - 'release**'
+      - 'stage**'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_URL: ${{ (contains(github.ref, 'release') && 'https://pwa.localnerve.net') || 'https://pwa-stage.localnerve.net' }}
+      APP_NAME: ${{ (contains(github.ref, 'release') && 'pwa') || 'pwa-stage' }}
+
+    if: github.event.pull_request.merged
+    steps:
+    - name: Get Branch Name
+      id: get_branch
+      run: echo ::set-output name=BRANCH_NAME::${GITHUB_REF/refs\/heads\//}
+    - uses: actions/checkout@v3
+    - name: Setup Node
+      uses: actions/setup-node@v3.0.0
+      with:
+        node-version: '12'
+    - name: Echo Input
+      run: |
+        echo DEPLOY_URL=$DEPLOY_URL
+        echo APP_NAME=$APP_NAME
+    - name: Install Dependencies
+      run: npm install
+    - name: Deploy to Heroku
+      if: ${{ success() }}
+      uses: akhileshns/heroku-deploy@v3.12.12
+      with:
+        heroku_api_key: ${{ secrets.HEROKU_API_KEY }}
+        heroku_app_name: ${{ env.APP_NAME }}
+        heroku_email: 'alex@localnerve.com'
+        branch: ${{ steps.get_branch.outputs.BRANCH_NAME }}
+        healthcheck: ${{ format('https://{0}.herokuapp.com', env.APP_NAME) }}
+        delay: 5
+    - name: Post-deploy
+      if: ${{ success() }}
+      run: |
+        echo GET '$DEPLOY_URL'
+        curl -i $DEPLOY_URL

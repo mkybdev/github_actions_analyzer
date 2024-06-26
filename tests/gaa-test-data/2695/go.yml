@@ -1,0 +1,45 @@
+name: go test
+
+on: [push, pull_request]
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@master
+      - uses: actions/setup-go@v2
+        with:
+          go-version: '1.14'
+      - name: Run Coverage
+        run: go test -v -covermode=count -coverprofile=profile.cov ./...
+      - name: Send coverage report to coveralls
+        uses: shogo82148/actions-goveralls@v1
+        with:
+          path-to-profile: profile.cov
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+
+    - name: Set up Go 1.4
+      uses: actions/setup-go@v2
+      with:
+        go-version: '1.14'
+      id: go
+
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v2
+
+    - name: Get dependencies
+      run: |
+        go get -v -t -d ./...
+        if [ -f Gopkg.toml ]; then
+            curl https://raw.githubusercontent.com/golang/dep/master/install.sh | sh
+            dep ensure
+        fi
+
+    - name: Build
+      run: go build -v .
+
+    - name: RecursiveTest
+      run: go test ./...

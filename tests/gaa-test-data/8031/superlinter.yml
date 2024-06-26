@@ -1,0 +1,38 @@
+---
+name: Super-Linter
+
+on:  # yamllint disable-line rule:truthy
+  push:
+    branches: '**'
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+
+jobs:
+  # Set the job key. The key is displayed as the job name
+  # when a job name is not provided
+  super-lint:
+    # Name the Job
+    name: Lint code base
+    # Set the type of machine to run on
+    runs-on: ubuntu-latest
+
+    steps:
+      # Checks out a copy of your repository on the ubuntu-latest machine
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Runs the Super-Linter action
+      - name: Run Super-Linter
+        uses: super-linter/super-linter@v5.7.2
+        env:
+          DEFAULT_BRANCH: master
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Suppressed because it conflicts with clang-format in some cases
+          VALIDATE_CPP: false
+          # Suppressed because copy/paste is sometimes required at low level
+          VALIDATE_JSCPD: false
+          # Suppressed because it even accuses book titles
+          VALIDATE_NATURAL_LANGUAGE: false

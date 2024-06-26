@@ -1,0 +1,58 @@
+name: CI
+on:
+  pull_request:
+  push:
+  schedule:
+  - cron: '0 0 * * 0'
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    strategy:
+      fail-fast: false
+      matrix:
+        scala:
+        - "2.12.x"
+        - "2.13.x"
+        - "3.x"
+        java:
+        - 8
+        - 21
+    steps:
+    - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+    - uses: actions/setup-java@99b8673ff64fbf99d8d325f52d9a5bdedb8483e9 # v4.2.1
+      with:
+        java-version: ${{matrix.java}}
+        distribution: temurin
+    - uses: coursier/cache-action@142d2738bd29f0eb9d44610828acb3a19809feab # v6.4.6
+    - run: sbt -v
+           scalafmtSbtCheck
+           "++ ${{ matrix.scala }} -v"
+           "scalafmtCheckAll"
+           "Test/compile"
+           "test"
+  push_gh_pages:
+    needs: test
+    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'atnos-org' && github.ref == 'refs/heads/master' && github.event_name == 'push' }}
+    steps:
+    - uses: actions/setup-java@99b8673ff64fbf99d8d325f52d9a5bdedb8483e9 # v4.2.1
+      with:
+        java-version: 8
+        distribution: temurin
+    - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+    - name: Install pandoc
+      run: ./.github/install_pandoc.sh
+    - uses: coursier/cache-action@142d2738bd29f0eb9d44610828acb3a19809feab # v6.4.6
+    - name: Generate html
+      run: ./.github/gen_doc.sh
+    - name: Push to gh-pages
+      uses: JamesIves/github-pages-deploy-action@5c6e9e9f3672ce8fd37b9856193d2a537941e66c # v4.6.1
+      with:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        BRANCH: gh-pages
+        FOLDER: target/specs2-reports/site
+        CLEAN: true

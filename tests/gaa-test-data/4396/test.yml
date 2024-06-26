@@ -1,0 +1,52 @@
+name: test
+on: [push, pull_request]
+jobs:
+  rspec:
+    name: rspec
+    runs-on: ubuntu-22.04
+
+    services:
+      postgres:
+        image: timescale/timescaledb:2.15.2-pg15
+        env:
+          POSTGRES_PASSWORD: secret
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      TZ: Etc/UTC
+      DATABASE_URL: postgresql://postgres:secret@localhost:5432/mnemosyne
+
+    steps:
+      - uses: actions/checkout@master
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+      # https://github.com/actions/setup-node/issues/899
+      - run: corepack enable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: yarn
+      - run: yarn install --immutable
+      - run: yarn build --mode production
+      - run: bundle exec rake db:create db:setup
+      - run: bundle exec rspec spec --format doc
+
+  rubocop:
+    name: rubocop
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@master
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+      - run: bundle exec rubocop --color --parallel --fail-level E

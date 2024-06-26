@@ -1,0 +1,57 @@
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+name: Tests
+jobs:
+  test:
+    strategy:
+      matrix:
+        go:
+          - version: 1.19
+            report: true
+          - version: 1.18
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install code climate
+        if: matrix.go.report == true && github.ref == 'refs/heads/main'
+        run: |
+          wget -O /tmp/cc-test-reporter https://codeclimate.com/downloads/test-reporter/test-reporter-latest-linux-amd64
+          chmod +x /tmp/cc-test-reporter
+          /tmp/cc-test-reporter before-build
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Run golangci-lint checks
+        run: |
+          docker-compose run lint
+      - name: Run tests
+        env:
+          GO_VERSION: ${{ matrix.go.version }}
+        run: |
+          docker-compose run test
+          echo $? > /tmp/GO_EXIT_CODE
+      - name: Combine coverage reports
+        if: matrix.go.report == true && github.ref == 'refs/heads/main'
+        run: |
+          modulesFound=$(find . -name 'go.mod' -type f -exec dirname {} \;)
+          count=0
+          pwd=$(pwd)
+          
+          for mod in $modulesFound; do
+            cd $mod
+            /tmp/cc-test-reporter format-coverage -t gocov -o /tmp/coverage/$count.json --prefix $(go list) c.out
+            count=$((count+1))
+            cd $pwd
+          done
+
+      - name: Send results to code climate
+        if: matrix.go.report == true && github.ref == 'refs/heads/main'
+        env:
+          CC_TEST_REPORTER_ID: ${{ secrets.CC_TEST_REPORTER_ID }}
+        run: |
+          exitCode=`cat /tmp/GO_EXIT_CODE`
+          if [ $exitCode -eq 0 ]; then 
+            /tmp/cc-test-reporter sum-coverage /tmp/coverage/*.json -p 6
+            /tmp/cc-test-reporter upload-coverage
+          fi

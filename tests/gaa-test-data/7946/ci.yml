@@ -1,0 +1,168 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - 'main'
+  pull_request:
+    branches:
+      - 'main'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref || github.run_id }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: compile
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler: [gcc, clang]
+        include:
+          - compiler: gcc
+            cc: gcc
+            cxx: g++
+          - compiler: clang
+            cc: clang
+            cxx: clang++
+    steps:
+      - name: install deps
+        run: |
+          sudo apt update -y
+          sudo apt install -y --no-install-recommends \
+            ninja-build ${{ matrix.compiler }}
+      - uses: actions/checkout@v3
+      - name: cmake
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+        run: |
+          cmake -B build-${{ matrix.compiler}}  -S . -GNinja
+      - name: build
+        run: |
+          cmake --build build-${{ matrix.compiler }}
+      - name: test
+        run: |
+          ninja -C build-${{ matrix.compiler }}  test
+  coverage:
+    name: coverage
+    runs-on: ubuntu-22.04
+    steps:
+      - name: install deps
+        run: |
+          sudo apt update -y
+          sudo apt install -y \
+              gcc-11 g++-11 lcov \
+              ninja-build
+          sudo update-alternatives \
+              --install /usr/bin/gcc gcc /usr/bin/gcc-11 100 \
+              --slave /usr/bin/g++ g++ /usr/bin/g++-11 \
+              --slave /usr/bin/gcov gcov /usr/bin/gcov-11
+          sudo update-alternatives --set gcc /usr/bin/gcc-11
+      - uses: actions/checkout@v3
+      - name: cmake
+        run: |
+          cmake \
+              -DCMAKE_BUILD_TYPE=DEBUG \
+              -DCODE_COVERAGE=1 \
+              -DUSE_SANITIZER=address \
+              -B build-coverage  -S .
+      - name: build
+        run: |
+          cmake --build build-coverage --verbose
+      - name: test
+        run: |
+          make CTEST_OUTPUT_ON_FAILURE=1 -C build-coverage test
+      - name: coverage
+        run: |
+          mkdir -p build-coverage/ccov
+          make -C build-coverage ccov-all
+          mv build-coverage/ccov/all-merged coverage
+      - name: upload
+        if: ${{ github.ref == 'refs/heads/main' }}
+        uses: actions/upload-artifact@v3
+        with:
+          name: coverage
+          path: coverage
+          if-no-files-found: error
+          retention-days: 2
+  analyzer:
+    name: analyzer
+    runs-on: ubuntu-22.04
+    steps:
+      - name: install deps
+        run: |
+          sudo apt update -y
+          sudo apt install -y \
+            clang clang-tools \
+            ninja-build
+      - uses: actions/checkout@v3
+      - name: cmake
+        run: |
+          mkdir -p ../scan-output
+          scan-build -o ../scan-output \
+                  --use-cc=clang --use-c++=clang++ \
+              cmake \
+                  -DLIBCMAP_TIDY=OFF \
+                  -B build-analyzer  -S .
+      - name: scan
+        run: |
+          scan-build -o ../scan-output \
+                  --use-cc=clang --use-c++=clang++ --keep-empty \
+              cmake --build build-analyzer --parallel
+        continue-on-error: true
+      - name: artifact
+        run: |
+          mv ../scan-output/$(ls -t ../scan-output | head -1) analyzer
+      - name: upload
+        if: ${{ github.ref == 'refs/heads/main' }}
+        uses: actions/upload-artifact@v3
+        with:
+          name: analyzer
+          path: analyzer
+          if-no-files-found: error
+          retention-days: 2
+  deploy:
+    needs: [ coverage, analyzer ]
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    permissions:
+      pages: write
+      id-token: write
+    concurrency:
+      group: "pages"
+      cancel-in-progress: true
+    steps:
+      - uses: actions/download-artifact@v3
+        with:
+          name: coverage
+          path: coverage
+      - uses: actions/download-artifact@v3
+        with:
+          name: analyzer
+          path: analyzer
+      - name: create pages
+        run: |
+          echo "" > index.html
+          echo "<html><body>" >> index.html
+          echo "<h2>libcmap</h2>" >> index.html
+          echo "<p>" >> index.html
+          echo "<li><a href=\"coverage\">coverage</a></li>" >> index.html
+          echo "<li><a href=\"analyzer\">analyzer</a></li>" >> index.html
+          echo "</p>" >> index.html
+          echo "</body></html>" >> index.html
+      - uses: actions/configure-pages@v2
+      - uses: actions/upload-pages-artifact@v1
+        with:
+          path: .
+      - id: deployment
+        uses: actions/deploy-pages@v1

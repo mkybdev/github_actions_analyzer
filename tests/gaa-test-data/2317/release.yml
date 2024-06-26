@@ -1,0 +1,79 @@
+name: Official v3.* release on wordpress.org
+on:
+  push:
+    tags:
+      # only when an official tag is defined for v3
+      - '3.[0-9]+.[0-9]+'
+
+jobs:
+  testing:
+    runs-on: ubuntu-latest
+    name: Run unit tests
+    strategy:
+      matrix:
+        php: [ "8.1", "8.2", "8.3" ]
+        phpunit: [ "9.5.10" ]
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - uses: php-actions/composer@v6
+
+    - name: Setup PHP runtime
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: "${{ matrix.php }}"
+        coverage: "none"
+
+    - name: Lint PHP files
+      run: |
+        curl -Ls https://github.com/overtrue/phplint/releases/latest/download/phplint.phar -o /usr/local/bin/phplint
+        chmod +x /usr/local/bin/phplint
+        /usr/local/bin/phplint -vvv --no-cache
+
+    - name: PHPUnit test
+      uses: php-actions/phpunit@v2
+      with:
+        php_version: ${{ matrix.php }}
+        version: ${{ matrix.phpunit }}
+        php_extensions: ldap mbstring
+        configuration: phpunit.xml
+        args: --coverage-text --verbose
+
+  release:
+    runs-on: ubuntu-latest
+    needs: testing
+    name: Release NADI
+    steps:
+    - uses: actions/checkout@v2
+
+    - uses: php-actions/composer@v6
+      with:
+        # even with a (pre-)release, we need all dev-dependencies so that strauss can repackage the namespaces.
+        # we exclude the then-unnecessary vendor/ directory in the "Zip all files" step.
+        dev: yes
+
+    - name: Set environment variable
+      run: echo "CURRENT_TAG=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
+
+    - name: Replace NADI version string
+      uses: jacobtomlinson/gha-find-replace@master
+      with:
+        find: "REPLACE_VERSION_BY_CI"
+        replace: ${{ env.CURRENT_TAG }}
+
+    - name: WordPress Plugin Deploy
+      uses: schakko/action-wordpress-plugin-deploy@develop
+      with:
+        generate-zip: true
+        dry-run: false
+      env:
+        SVN_USERNAME: ${{ secrets.WORDPRESS_ORG_SVN_USERNAME }}
+        SVN_PASSWORD: ${{ secrets.WORDPRESS_ORG_SVN_PASSWORD }}
+        SLUG: next-active-directory-integration
+    
+    - name: Upload Release
+      uses: ncipollo/release-action@v1
+      with:
+        artifacts: "next-active-directory-integration.zip"
+        token: ${{ secrets.GITHUB_TOKEN }}

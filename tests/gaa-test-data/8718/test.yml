@@ -1,0 +1,19 @@
+on: [push]
+name: phpunit
+jobs:
+  phpunit:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+    # - name: php-cs-fixer
+    #   uses: docker://oskarstark/php-cs-fixer-ga
+    - name: composer install
+      uses: MilesChou/composer-action@master
+      with:
+        args: install -q --no-ansi --no-interaction --no-scripts --no-suggest --no-progress
+          --prefer-dist
+    # - nw--min-quality=80 --min-complexity=80 --min-architecture=80 --min-style=80
+    - name: phpunit
+      uses: ./actions/run-phpunit/
+      with:
+        args: tests/

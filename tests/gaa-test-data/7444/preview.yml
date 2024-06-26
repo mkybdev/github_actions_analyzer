@@ -1,0 +1,23 @@
+on:
+  push:
+    branches:
+      - preview
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: 2.7
+          bundler-cache: true
+      - run: bundle exec jekyll build
+      - run: |
+          echo "User-agent: * Disallow: /" >_site/robots.txt
+      - uses: peaceiris/actions-gh-pages@v3.8.0
+        with:
+          deploy_key: ${{ secrets.ACTIONS_DEPLOY_KEY }}
+          external_repository: vimc/www-preview
+          publish_dir: ./_site
+          exclude_assets: CNAME
+          cname: www-preview.vaccineimpact.org

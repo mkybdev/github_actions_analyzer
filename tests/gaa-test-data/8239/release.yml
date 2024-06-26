@@ -1,0 +1,122 @@
+name: Release
+
+on: 
+  milestone:
+    types: [closed]
+
+jobs:
+  perform-release:
+    runs-on: ubuntu-latest
+    env:
+      DISPLAY: ':99'
+    steps:
+    - uses: actions/checkout@v2
+    - name: Create a new temporary branch
+      run: git checkout -b release_${{ github.event.milestone.title }}
+    - uses: actions/setup-java@v2
+      with:
+        distribution: 'adopt'
+        java-version: '8'
+        check-latest: true
+    - name: Set version in pom
+      run: mvn versions:set -DnewVersion=${{ github.event.milestone.title }}
+    - name: Commit pom changes
+      uses: zwaldowski/git-commit-action@v1
+      with:
+        commit_message: ${{ github.event.milestone.title }}
+        author_name: github-actions[bot]
+        author_email: github-actions[bot]@users.noreply.github.com
+    - name: Setup headless environment
+      run: |
+        Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &
+    - name: Deploy maven package to Nexus
+      uses: samuelmeuli/action-maven-publish@v1
+      with:
+        gpg_private_key: ${{ secrets.private }}
+        gpg_passphrase: ${{ secrets.gpg_passphrase }}
+        nexus_username: ${{ secrets.nexus_username }}
+        nexus_password: ${{ secrets.nexus_password }}
+    - name: Tag changes and push the tag
+      run: |
+        git tag ${{ github.event.milestone.title }} -m '${{ github.event.milestone.title }}: tagged for release'
+        git push origin ${{ github.event.milestone.title }}
+    - name: Create release notes markdown
+      uses: docker://decathlon/release-notes-generator-action:2.0.0
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        OUTPUT_FOLDER: temp_release_notes
+        USE_MILESTONE_TITLE: "true"
+    - name: Adapt release notes to be used in GitHub release body
+      id: changelog
+      run: |
+        description=$(cat temp_release_notes/${{ github.event.milestone.title }}.md)
+        description="${description//'%'/'%25'}"
+        description="${description//$'\n'/'%0A'}"
+        description="${description//$'\r'/'%0D'}"
+        description="${description%%## :heart*}"
+        echo "::set-output name=body::$description"
+    - name: Create release in GitHub
+      id: create_release
+      uses: actions/create-release@master
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.event.milestone.title }}
+        release_name: Release ${{ github.event.milestone.title }}
+        body: ${{ steps.changelog.outputs.body }}
+        draft: false
+        prerelease: false
+    - name: Upload aljebra jar as a GitHub release asset
+      uses: actions/upload-release-asset@v1.0.1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }} 
+        asset_path: aljebra/target/aljebra-${{ github.event.milestone.title }}.jar
+        asset_name: aljebra-${{ github.event.milestone.title }}.jar
+        asset_content_type: application/java-archive
+    - name: Upload aljebra javadoc as a GitHub release asset
+      uses: actions/upload-release-asset@v1.0.1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }} 
+        asset_path: aljebra/target/aljebra-${{ github.event.milestone.title }}-javadoc.jar
+        asset_name: aljebra-${{ github.event.milestone.title }}-javadoc.jar
+        asset_content_type: application/java-archive
+    - name: Upload jeometry-api jar as a GitHub release asset
+      uses: actions/upload-release-asset@v1.0.1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }} 
+        asset_path: jeometry-api/target/jeometry-api-${{ github.event.milestone.title }}.jar
+        asset_name: jeometry-api-${{ github.event.milestone.title }}.jar
+        asset_content_type: application/java-archive
+    - name: Upload jeometry-api javadoc as a GitHub release asset
+      uses: actions/upload-release-asset@v1.0.1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }} 
+        asset_path: jeometry-api/target/jeometry-api-${{ github.event.milestone.title }}-javadoc.jar
+        asset_name: jeometry-api-${{ github.event.milestone.title }}-javadoc.jar
+        asset_content_type: application/java-archive
+    - name: Upload jeometry-double jar as a GitHub release asset
+      uses: actions/upload-release-asset@v1.0.1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }} 
+        asset_path: jeometry-double/target/jeometry-double-${{ github.event.milestone.title }}.jar
+        asset_name: jeometry-double-${{ github.event.milestone.title }}.jar
+        asset_content_type: application/java-archive
+    - name: Upload jeometry-double javadoc as a GitHub release asset
+      uses: actions/upload-release-asset@v1.0.1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }} 
+        asset_path: jeometry-double/target/jeometry-double-${{ github.event.milestone.title }}-javadoc.jar
+        asset_name: jeometry-double-${{ github.event.milestone.title }}-javadoc.jar
+        asset_content_type: application/java-archive

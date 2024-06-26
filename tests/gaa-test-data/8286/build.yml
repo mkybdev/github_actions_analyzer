@@ -1,0 +1,28 @@
+on: 
+  push:
+    branches:
+      - '**'
+    tags-ignore:
+      - '*.*'
+
+name: build
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v2
+      - name: setup
+        uses: actions/setup-node@v1
+        with:
+          node-version: 12        
+      - name: build project
+        run: |
+          npm ci
+          npm run build
+          npm test
+        env:
+            CI: true
+            NODE_AUTH_TOKEN: ${{secrets.GITHUB_TOKEN}}
+            NPM_TFSO_TOKEN: ${{secrets.NPM_TFSO_TOKEN}}

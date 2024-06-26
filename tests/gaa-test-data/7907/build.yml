@@ -1,0 +1,36 @@
+name: Build with pandoc
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    if: "!contains(github.event.head_commit.message, 'skip ci')"
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v2
+        with:
+          node-version: "14"
+      - name: install texlive
+        run: sudo apt-get install texlive
+      - name: install xetex
+        run: sudo apt-get install texlive-xetex
+      - name: install pandoc
+        run: wget https://github.com/jgm/pandoc/releases/download/2.16.2/pandoc-2.16.2-1-amd64.deb && sudo dpkg -i pandoc-2.16.2-1-amd64.deb
+      - name: install pandoc-fignos
+        run: pip install pandoc-fignos --user
+      - name: install dependencies
+        run: npm ci
+      - name: build html
+        run: npm run html
+      - name: build pdf
+        run: npm run pandoc
+      - uses: EndBug/add-and-commit@v7
+        with:
+          add: "docs The-Ultimate-Laser-Guide.pdf"
+          author_name: sebastian-meierBot
+          author_email: dev@sebastian-meier.email

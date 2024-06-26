@@ -1,0 +1,107 @@
+name: Build
+
+on:
+  push:
+      branches:
+          - master
+          - main
+  pull_request:
+      branches:
+          - "*"
+  release:
+    types: [created]
+
+jobs:
+
+  test:
+
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: Test
+        shell: pwsh
+        run: dotnet test -c Release
+
+
+  publish-nuget-pacakge:
+    needs: test
+
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: Restore
+        shell: pwsh
+        run: dotnet restore
+
+      - name: Package
+        shell: pwsh
+        run: dotnet pack .\Tocsoft.GraphQLCodeGen.MsBuild\Tocsoft.GraphQLCodeGen.MsBuild.csproj -c Release -o packages
+
+      - uses: actions/upload-artifact@v2
+        with:
+          name: nuget
+          path: packages/*.nupkg
+
+      - name: Publish the package to GPR
+        if: (github.event_name != 'pull_request')
+        shell: pwsh
+        run: dotnet nuget push "$((Resolve-Path packages/*.nupkg).Path)" -s https://nuget.pkg.github.com/tocsoft/index.json -k ${{secrets.GITHUB_TOKEN}}  --skip-duplicate 
+        
+      - name: Publish the package to nuget.org
+        if: github.event_name == 'release' && github.event.action == 'created'
+        shell: pwsh
+        run: dotnet nuget push "$((Resolve-Path packages/*.nupkg).Path)" -k ${{secrets.NUGET_TOKEN}}  --skip-duplicate --source https://api.nuget.org/v3/index.json
+
+  publish-npm-package:
+    needs: test
+
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: Restore
+        shell: pwsh
+        run: dotnet restore
+
+      - name: Package
+        shell: pwsh
+        run: dotnet pack .\Tocsoft.GraphQLCodeGen.Npm\Tocsoft.GraphQLCodeGen.Npm.csproj -c Release -o packages
+
+      - uses: actions/upload-artifact@v2
+        with:
+          name: npm
+          path: packages/*.tgz
+
+      - name: Configure authenticate bintray
+        if: (github.event_name != 'pull_request')
+        shell: pwsh
+        run:  Set-Content -Path '.npmrc' -Value "${{ secrets.BINTRAY_NPMRC }}"
+
+      - name: Publish npm package to bintray
+        if: (github.event_name != 'pull_request')
+        shell: pwsh
+        run: npm publish "$((Resolve-Path packages/*.tgz).Path)" --registry https://api.bintray.com/npm/tocsoft/npm
+
+      - name: Configure npmjs package registry
+        if: github.event_name == 'release' && github.event.action == 'created'
+        shell: pwsh
+        run:  Set-Content -Path '.npmrc' -Value "${{ secrets.NPMJS_NPMRC }}"
+
+      - name: Publish npm package to Npmjs package registry
+        if: github.event_name == 'release' && github.event.action == 'created'
+        shell: pwsh
+        run: npm publish "$((Resolve-Path packages/*.tgz).Path)" --access public --registry https://registry.npmjs.org/

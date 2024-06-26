@@ -1,0 +1,88 @@
+name: windows
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  build_thyme_windows_msvc:
+    runs-on: windows-2019
+    strategy:
+      matrix:
+        platform: [x86, amd64]
+          
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: 'recursive'   
+        fetch-depth: 0
+        ref: ${{ github.event.pull_request.head.sha }}
+        
+    - uses: ilammy/msvc-dev-cmd@v1.10.0
+      with:
+        arch: ${{ matrix.platform }}
+        
+    - name: Set variables
+      id: vars
+      run: |
+        If ("${{ matrix.platform }}" -eq "x86") {
+          echo "build=x86" >> $GITHUB_OUTPUT
+          echo "build_type=Win32" >> $GITHUB_OUTPUT
+          echo "arc_path=i686" >> $GITHUB_OUTPUT
+        } else {
+          echo "build=x64" >> $GITHUB_OUTPUT
+          echo "build_type=x64" >> $GITHUB_OUTPUT
+          echo "arc_path=x86_64" >> $GITHUB_OUTPUT
+        }
+        echo "wx_ver=wxWidgets-3.0.5" >> $GITHUB_OUTPUT
+        
+    - name: Install dependencies
+      run: |
+        Invoke-WebRequest -Uri https://github.com/ninja-build/ninja/releases/download/v1.10.1/ninja-win.zip -OutFile $Env:TEMP\ninja-win.zip
+        Expand-Archive $Env:TEMP\ninja-win.zip -DestinationPath $Env:TEMP\ninja
+        echo "$Env:TEMP\ninja" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        ninja --version
+        
+    - name: Build Thyme
+      run: |
+        cmake -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_IGNORE_PATH=C:/Strawberry/c/lib -DBUILD_TESTS=ON -DBUILD_TOOLS=ON -DLOGGING=ON -DSTANDALONE=ON -DUSE_CRASHPAD=ON -B build
+        cmake --build build --config RelWithDebInfo
+
+    - name: Test Thyme
+      run: |
+        cd build
+        ctest . --output-on-failure
+        
+    - name: Create archives
+      shell: bash
+      id: mkarc
+      run: |
+        mkdir artifact
+        7z a artifact/thyme_${{ steps.vars.outputs.arc_path }}.zip ./build/thyme.exe ./build/thyme.pdb ./build/DebugWindow.dll ./build/DebugWindow.pdb ./build/thymecrashhandler.exe ./build/thymecrashhandler.pdb ./build/w3dview.exe ./build/w3dview.pdb ./build/wdump.exe ./build/wdump.pdb
+        if [ ${{ matrix.platform }} = "x86" ]; then 7z u artifact/thyme_${{ steps.vars.outputs.arc_path }}.zip ./build/thyme.dll ./build/thymedll.pdb ./build/avifil32.dll ./build/proxydll.pdb ;fi
+    - name: Upload artifact
+      uses: actions/upload-artifact@v1
+      with:
+        name: thyme
+        path: artifact
+        
+    - name: Upload development release
+      if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/develop' }}
+      uses: softprops/action-gh-release@v1
+      with:
+        name: Development Build
+        tag_name: "latest"
+        prerelease: true
+        files: |
+          artifact\*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Upload tagged release
+      if: ${{ startsWith(github.ref, 'refs/tags/') }}
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          artifact\*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

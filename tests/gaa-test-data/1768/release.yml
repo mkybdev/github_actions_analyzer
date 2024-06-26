@@ -1,0 +1,71 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - \d+.\d+.\d+
+
+jobs:
+  x86-64-unknown-linux-release:
+    name: Build and upload x86-64-unknown-linux-release to Cloudsmith
+    runs-on: ubuntu-latest
+    container:
+      image: ponylang/shared-docker-ci-x86-64-unknown-linux-builder:release
+    steps:
+      - uses: actions/checkout@v1
+      - name: Build and upload
+        run: bash .ci-scripts/release/x86-64-unknown-linux-release.bash
+        env:
+          CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
+
+  x86-64-apple-darwin-release:
+    name: Build and upload x86-64-apple-darwin-release to Cloudsmith
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v1
+      - name: brew install ponyc
+        run: brew install ponyc
+      - name: brew install dependencies
+        run: brew install coreutils python
+      - name: pip install dependencies
+        run: pip3 install --upgrade cloudsmith-cli
+      - name: Build and upload
+        run: bash .ci-scripts/release/x86-64-apple-darwin-release.bash
+        env:
+          CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
+
+  build-release-docker-images:
+    name: Build and push release Docker images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v1
+      - name: Docker login
+        run: "docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD"
+        env:
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+      - name: Build and push
+        run: bash .ci-scripts/release/build-docker-images-on-release.bash
+
+  homebrew:
+    name: Bump Homebrew formula
+    runs-on: ubuntu-latest
+    steps:
+      - uses: mislav/bump-homebrew-formula-action@eb843fa04b91b8bc5d4953899e3fff15c95f347c
+        with:
+          formula-name: corral
+        env:
+          COMMITTER_TOKEN: ${{ secrets.HOMEBREW_RELEASE_TOKEN }
+
+  trigger-release-announcement:
+    name: Trigger release announcement
+    runs-on: ubuntu-latest
+    container:
+      image: ponylang/shared-docker-ci-release:20191107
+    needs: [x86-64-unknown-linux-release, x86-64-apple-darwin-release, build-release-docker-images, homebrew]
+    steps:
+      - uses: actions/checkout@v1
+      - name: Trigger release announcement
+        run: bash .ci-scripts/release/trigger-release-announcement.bash
+        env:
+          RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}

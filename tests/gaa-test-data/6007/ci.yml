@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+    branches: [master]
+  schedule:
+    - cron: '0 6 * * 6'
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+          - os: ubuntu-latest
+            nim-flags: '--cc:clang'
+          - os: ubuntu-latest
+            nim-flags: '--cpu:i386 --passC:-m32 --passL:-m32'
+          - os: windows-latest
+    runs-on: ${{matrix.os}}
+    steps:
+      - name: Download source
+        uses: actions/checkout@v3
+      - name: Install Nim
+        uses: jiro4989/setup-nim-action@23b5809a314afab9cacb55285d88ece6a35e38dc
+      - name: Install cross-compiler
+        if: contains(matrix.nim-flags, 'i386')
+        run: sudo apt-get update && sudo apt-get -y install gcc-multilib
+      - name: Run tests
+        run: nim compile ${{matrix.nim-flags}} --run test/test
+      - name: Check formatting
+        if: runner.os == 'Linux'
+        run: |
+          find . -name '*.nim' -exec nimpretty --indent:2 {} \;
+          git diff --exit-code

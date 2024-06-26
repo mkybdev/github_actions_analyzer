@@ -1,0 +1,39 @@
+# This workflow will build a Java project with Gradle
+# For more information see: https://help.github.com/actions/language-and-framework-guides/building-and-testing-java-with-gradle
+
+name: Java CI
+
+on: [ push, pull_request ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        env:
+          # see https://www.jetbrains.com/idea/download/previous.html
+          # and https://www.jetbrains.com/intellij-repository/snapshots/
+          - IDEA_VERSION: IC-2022.2.5
+          - IDEA_VERSION: IC-2022.3.1
+          - IDEA_VERSION: IC-2023.2.2
+          - IDEA_VERSION: IU-LATEST-EAP-SNAPSHOT
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Set up JDK 17
+        uses: actions/setup-java@v1
+        with:
+          java-version: 17
+      - name: Build with Gradle
+        run: |
+          ./gradlew -PideaVersion=${IDEA_VERSION} buildPlugin
+          echo "DIST_FILE=$(find build/distributions/ -name 'jetbrains-plugin-st4-*.zip' -exec basename {} .zip \;)" >> $GITHUB_ENV
+        env: ${{ matrix.env }}
+      - name: Archive distribution artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: ${{env.DIST_FILE}}
+          path: build/distributions/jetbrains-plugin-st4-*.zip
+        if: matrix.env.IDEA_VERSION == 'IC-2022.2.5'

@@ -1,0 +1,89 @@
+name: CI
+on: [push, pull_request]
+env:
+    EVENT_TYPE: ${{ github.event_name }}
+    COMMIT_COUNT: ${{ github.event.commits.length }}
+    CI_REPO_SLUG: ${{ github.repository }}
+jobs:
+    test-linux:
+        name: ${{ matrix.name }}
+        runs-on: ubuntu-20.04
+        strategy:
+            matrix:
+                include:
+                  - name: ARM  [GOAL install]  [buster]
+                    script-id: arm
+                  - name: Win32
+                    script-id: win32
+                  - name: Win64
+                    script-id: win64
+                  - name: i386 Linux  [GOAL install]  [focal]
+                    script-id: linux_i386
+                  - name: x86_64 Linux  [GOAL install]  [GUI]  [focal]  [no depends]
+                    script-id: native
+                  - name: x86_64 Linux  [GOAL install]  [GUI]  [bionic]  [no depends]
+                    script-id: native_old
+                  - name: macOS 10.14  [GOAL deploy]  [GUI]  [no tests]  [focal]
+                    script-id: mac
+        env:
+            FILE_ENV: ./ci/test/00_setup_env_${{ matrix.script-id }}.sh
+            OS_NAME: linux
+        steps:
+        - name: checkout
+          uses: actions/checkout@v3
+        - name: current time for cache
+          run: echo "TIMESTAMP=$(date +%s)" >> $GITHUB_ENV
+        - name: cache
+          uses: actions/cache@v3
+          with:
+            path: |
+                ./depends/built
+                ./ci/scratch/.ccache
+            key: ${{ runner.os }}-${{ matrix.script-id }}-${{ env.TIMESTAMP }}
+            restore-keys: |
+                ${{ runner.os }}-${{ matrix.script-id }}-
+        - name: test
+          run: |
+            ./ci/test_run_all.sh
+    test-macos:
+        name: macOS 12 native  [GOAL install]  [GUI]  [no depends]
+        runs-on: macos-12
+        env:
+            DANGER_RUN_CI_ON_HOST: true
+            CI_USE_APT_INSTALL: no
+            FILE_ENV: ./ci/test/00_setup_env_mac_host.sh
+            OS_NAME: macos
+        steps:
+        - name: checkout
+          uses: actions/checkout@v3
+        - name: current time for cache
+          run: echo "TIMESTAMP=$(date +%s)" >> $GITHUB_ENV
+        - name: cache
+          uses: actions/cache@v3
+          with:
+            path: |
+                ./ci/scratch/.ccache
+            key: ${{ runner.os }}-${{ env.TIMESTAMP }}
+            restore-keys: |
+                ${{ runner.os }}-
+        - name: install-packages
+          run: |
+            brew install autoconf automake boost miniupnpc qrencode ccache leveldb librsvg libtool libzip openssl@1.1 pkg-config python qt@5 xquartz
+        - name: test
+          run: |
+            ./ci/test_run_all.sh
+    lint:
+        name: Lint
+        runs-on: ubuntu-22.04
+        steps:
+        - name: checkout
+          uses: actions/checkout@v3
+        - name: setup-python
+          uses: actions/setup-python@v4
+          with:
+            python-version: 3.11
+        - name: lint
+          run: |
+            set -o errexit; source ./ci/lint/04_install.sh
+            set -o errexit; source ./ci/lint/05_before_script.sh
+            set -o errexit; source ./ci/lint/06_script.sh

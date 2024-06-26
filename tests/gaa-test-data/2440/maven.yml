@@ -1,0 +1,38 @@
+name: MVN Run Tests and Publish Artifacts
+on:
+  push:
+    #branches-ignore:
+    #  - '**' # disables this job
+    branches: [ master ]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - uses: actions/checkout@v3
+    - name: Set up JDK 11
+      uses: actions/setup-java@v3
+      with:
+        java-version: '11'
+        distribution: 'temurin'
+        cache: maven
+    - name: clean test deploy
+      #run: mvn clean test -B -V -Duser.timezone=CET
+      # export MAVEN_OPTS="-Djdk.xml.xpathExprGrpLimit=0 -Djdk.xml.xpathExprOpLimit=0 -Djdk.xml.xpathTotalOpLimit=0";    
+      # -DargLine="-Djdk.xml.xpathExprGrpLimit=150 -Djdk.xml.xpathExprOpLimit=150 -Djdk.xml.xpathTotalOpLimit=150"
+      run: pwd;
+            ls .;
+            mvn clean test deploy -pl "!ExperimentDesigner,!registration,!gwt-cordova" -DaltDeploymentRepository=snapshot-repo::default::file:../snapshots;
+            sed -i 's|<versionCheck.buildType>testing</versionCheck.buildType>|<versionCheck.buildType>stable</versionCheck.buildType>|g' ./pom.xml;
+            sed -i 's|-testing-SNAPSHOT|-stable-SNAPSHOT|g' ./pom.xml ./*/pom.xml;
+            mvn clean test deploy -pl "!ExperimentDesigner,!registration,!gwt-cordova" -DaltDeploymentRepository=snapshot-repo::default::file:../snapshots;
+            cd ExperimentDesigner;
+            mvn test install exec:exec -DargLine="-Djdk.xml.xpathExprGrpLimit=140 -Djdk.xml.xpathExprOpLimit=650 -Djdk.xml.xpathTotalOpLimit=150" -Dexec.executable=java -Dexec.classpathScope=runtime -Dexec.args="-classpath %classpath nl.mpi.tg.eg.experimentdesigner.util.DocumentationGenerator ../../snapshots ../../snapshots";
+            cd ..;
+    - name: Deploy
+      uses: peaceiris/actions-gh-pages@v3
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ../snapshots
+        keep_files: true

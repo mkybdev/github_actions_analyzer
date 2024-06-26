@@ -1,0 +1,122 @@
+name: Pull request checks
+
+# Run on PRs and when manually run
+on: [pull_request, workflow_dispatch]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    container:
+      image: robojackets/robocup-software:foxy
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Config git
+        run: "git config --global --add safe.directory /__w/robocup-software/robocup-software"
+
+      - name: Check out repository
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: Run util/ubuntu-setup as sudo
+        run: "sudo ./util/ubuntu-setup --yes"
+
+      - name: Install git pre-commit hooks & update submodules
+        run: "./util/git-setup --yes"
+
+      - name: Make ${{ github.base_ref }} branch exist
+        run: |
+          git checkout -b ${{ github.base_ref }} --track origin/${{ github.base_ref }}
+          git checkout -
+
+      - name: Build
+        run: |
+          echo "::add-matcher::ci/clang.json"
+          source /opt/ros/foxy/setup.bash
+          source install/setup.bash
+          make all
+          echo "::remove-matcher owner=clang::"
+
+      - name: Test
+        run: |
+          echo "::add-matcher::ci/gtest.json"
+          source /opt/ros/foxy/setup.bash
+          source install/setup.bash
+          ./install/lib/rj_robocup/test-soccer
+          echo "::remove-matcher owner=gtest::"
+
+      - name: Run clang-tidy
+        run: |
+          echo "::add-matcher::ci/clang-tidy.json"
+          source /opt/ros/foxy/setup.bash
+          source install/setup.bash
+          DIFFBASE=${{ github.base_ref }} make checktidy-lines
+          echo "::remove-matcher owner=clang-tidy::"
+        if: always()
+
+  fix-style:
+    # Check if the PR is not raised by this workflow
+    if: startsWith(github.head_ref, 'fix-code-style') == false
+    runs-on: ubuntu-latest
+    container:
+      image: ros:foxy
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Config git
+        run: "git config --global --add safe.directory /__w/robocup-software/robocup-software"
+
+      - name: Check out repository
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: Make ${{ github.base_ref }} branch exist
+        run: |
+          git checkout -b ${{ github.base_ref }} --track origin/${{ github.base_ref }}
+          git checkout -
+
+      - name: Install dependencies
+        run: |
+          apt-get update && apt-get -y install clang-format sudo git python3-pip
+          sudo pip3 install --upgrade flake8-diff flake8 pip
+          sudo pip3 install --upgrade black
+
+      - name: Make ${{ github.head_ref }} branch exist
+        run: |
+            git checkout -b ${{ github.head_ref }}
+            git checkout -
+
+      - name: Run style on all changed files
+        id: style-check
+        run: |
+            # check formatting style (C++)
+            git diff -U0 --no-color ${{ github.base_ref }} ${{ github.head_ref }} | python3 util/clang-format-diff.py -binary clang-format-10 -i -p1
+
+            if ! git diff-index --quiet HEAD; then
+              echo "::set-output name=changed::true"
+            else
+              echo "::set-output name=changed::false"
+            fi
+
+      - name: Create PR with style fixes
+        # Only make the PR if the original PR is within this repo (not from a fork)
+        if: steps.style-check.outputs.changed == 'true' && github.event.pull_request.head.repo.full_name == github.repository
+        uses: peter-evans/create-pull-request@v3
+        with:
+          commit-message: "automated style fixes"
+          title: Fix Code Style On ${{ github.head_ref }}
+          body: This pull request contains automatic style formatting for PR \#${{ github.event.number }}. @${{ github.event.pull_request.user.login }}, please merge this branch into your own to pass style checks!
+          labels: style fixes, automated PR
+          branch: fix-code-style/${{ github.head_ref }}
+          base: ${{ github.head_ref }}
+          reviewers: ${{ github.event.pull_request.user.login }}
+
+      - name: Fail if style changes were made
+        if: steps.style-check.outputs.changed == 'true'
+        run: exit 1
+
+

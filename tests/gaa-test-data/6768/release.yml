@@ -1,0 +1,36 @@
+#Used also in pilas-bloques-analytics
+
+on:
+  workflow_call:
+    inputs:
+      asset_name:
+        required: true
+        type: string
+      asset_path:
+        required: true
+        type: string
+       
+jobs:
+  package-release: #https://github.com/actions/upload-release-asset
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v1
+      - run: npm install
+      - run: npm run package
+
+      - name: Get release upload url
+        id: get_release
+        uses: bruceadams/get-release@v1.2.3
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
+      - name: Release
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+            upload_url: ${{ steps.get_release.outputs.upload_url }}
+            asset_path: ${{ inputs.asset_path }}
+            asset_name: ${{ inputs.asset_name }}
+            asset_content_type: application/gzip

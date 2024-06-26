@@ -1,0 +1,52 @@
+name: Build
+
+permissions:
+  contents: write
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    name: Node ${{ matrix.node_version }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node_version: [
+            18.x, # EOL: April 2025
+            20.x, # EOL: April 2026
+          ]
+
+    steps:
+      - uses: actions/checkout@master
+
+      - name: Setup Node.js
+        env:
+          NODE_VERSION: ${{ matrix.node_version }}
+        run: |
+          curl -sL https://deb.nodesource.com/setup_$NODE_VERSION | sudo -E bash -
+          sudo apt-get install -y nodejs
+
+      - name: Build package
+        run: ./build-package
+
+      - name: Install package
+        run: sudo dpkg -i deb/*.deb
+
+      - name: Test
+        run: ./tests.sh
+
+      - name: Journal
+        run: sudo systemctl --full status thelounge.service
+
+      - name: Upload artifact
+        if: ${{ matrix.node_version == '18.x' }}
+        uses: actions/upload-artifact@v3
+        with:
+          name: thelounge.deb
+          path: deb/*.deb
+
+      - name: Release
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/') && matrix.node_version == '18.x' }}
+        uses: softprops/action-gh-release@v1
+        with:
+          files: deb/*.deb

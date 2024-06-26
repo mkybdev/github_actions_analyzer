@@ -1,0 +1,102 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - renovate/**
+  pull_request:
+
+permissions: {}
+
+env:
+  NODE_VERSION: 20
+
+jobs:
+  tests:
+    strategy:
+      matrix:
+        node: ['16.14.0', '18', '20', '21']
+        os: ['ubuntu']
+        include:
+          - os: macos
+            node: '20'
+          - os: windows
+            node: '20'
+
+    name: Tests (Node.js v${{ matrix.node }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Unit tests with coverage
+        if: '${{ matrix.node == env.NODE_VERSION }}'
+        run: pnpm test -- --coverage
+
+      - name: Unit tests
+        if: '${{ matrix.node != env.NODE_VERSION }}'
+        run: pnpm test
+
+      - name: Upload coverage to Codecov
+        if: '${{ matrix.node == env.NODE_VERSION }}'
+        uses: codecov/codecov-action@v4
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+  website:
+    name: Website test build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build
+        run: pnpm exec nx run @react-docgen-internal/website:build

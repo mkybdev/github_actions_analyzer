@@ -1,0 +1,108 @@
+name: Acceptance Tests
+
+on:
+  pull_request:
+    branches:
+      - master
+      - "[0-9]+.[0-9]+"
+  push:
+    branches:
+      - master
+      - "[0-9]+.[0-9]+"
+  release:
+
+jobs:
+  acceptance-tests:
+    name: PHP ${{ matrix.versions.php }} / PHPUnit ${{ matrix.phpunit_version }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        phpunit_version:
+          - 8
+          - 9
+          - 10
+        versions:
+          - php: "7.2"
+            composer: 1
+          - php: "7.3"
+            composer: 1
+          - php: "7.4"
+            composer: 2
+          - php: "8.0"
+            composer: 2
+          - php: "8.1"
+            composer: 2
+          - php: "8.2"
+            composer: 2
+        exclude:
+          - versions:
+              php: "8.0"
+            phpunit_version: 8
+          - versions:
+              php: "8.1"
+            phpunit_version: 8
+          - versions:
+              php: "8.2"
+            phpunit_version: 8
+          - versions:
+              php: "7.2"
+            phpunit_version: 9
+          - versions:
+              php: "7.2"
+            phpunit_version: 10
+          - versions:
+              php: "7.3"
+            phpunit_version: 10
+          - versions:
+              php: "7.4"
+            phpunit_version: 10
+          - versions:
+              php: "8.0"
+            phpunit_version: 10
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup PHP ${{ matrix.versions.php }}
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: "${{ matrix.versions.php }}"
+          coverage: pcov
+          tools: composer:v${{ matrix.versions.composer }}
+
+      - name: Get Composer Cache Directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
+
+      - name: Cache Dependencies
+        uses: actions/cache@v3
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-composer-${{ matrix.versions.php }}-${{ hashFiles('**/composer.json') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-${{ matrix.versions.php }}
+            ${{ runner.os }}-composer-
+
+      - name: Update PHPUnit Version
+        run: composer require --no-update --no-interaction --no-progress --update-with-all-dependencies phpunit/phpunit:^${{ matrix.phpunit_version }}.0
+
+      - name: Install Dependencies
+        run: composer install --no-interaction --no-progress
+
+      - name: Check composer.json Format
+        run: composer normalize --diff --dry-run --no-interaction --ansi
+
+      - name: Check Code Style
+        run: composer style:check
+
+      - name: Run Static Analysis
+        run: composer test:static -- --no-progress
+
+      - name: Run Unit & Functional Tests
+        run: composer test:coverage
+
+      - name: Upload Coverage
+        uses: codecov/codecov-action@v3
+        with:
+          files: coverage.xml

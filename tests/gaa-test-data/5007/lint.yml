@@ -1,0 +1,20 @@
+name: Lint
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, edited]
+
+jobs:
+  lint:
+    name: Lint changed files
+    runs-on: ubuntu-20.04
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+
+    - uses: world-federation-of-advertisers/actions/lint@v2
+      with:
+        license-type: apache
+        copyright-holder: The Cross-Media Measurement Authors

@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ["1.20", "1.19", "1.18", "1.17"]
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v3
+        with:
+          go-version: ${{ matrix.go }}
+
+      - name: Install dependencies
+        run: |
+          go install golang.org/x/lint/golint@latest
+          go install github.com/mattn/goveralls@v0.0.11
+
+      - name: Lint
+        run: |
+          go vet ./...
+          golint -set_exit_status ./...
+
+      - name: Test
+        run: |
+          go test -v -race -covermode=atomic -coverprofile=profile.cov ./...
+
+      - name: Coverage
+        run: |
+          goveralls -coverprofile=profile.cov -service=github -parallel -flagname="go-${{ matrix.go }}"
+        env:
+          COVERALLS_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,25 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - '*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Set up JDK 17
+        uses: actions/setup-java@v2
+        with:
+          distribution: 'temurin'
+          java-version: 17
+          cache: 'gradle'
+      - name: Fix gradlew
+        run: sed -i -e 's/\r$//' ./gradlew
+      - name: Make gradlew executable
+        run: chmod +x ./gradlew
+      - name: Ensure Build
+        run: ./gradlew build

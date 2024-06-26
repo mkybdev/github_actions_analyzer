@@ -1,0 +1,43 @@
+name: Coverity
+
+on:
+  push:
+    branches:    
+    - '**'
+    - '!gh-pages'
+
+jobs:
+  build:
+    name: Coverity
+    runs-on: ubuntu-latest
+    if: "contains(github.event.head_commit.message, '[coverity]')"
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+
+    - name: Init submodules
+      run: git submodule update --init --recursive
+
+    - name: Download tool
+      run: |
+        wget -q https://scan.coverity.com/download/cxx/linux64 --post-data "token=${{ secrets.COVERITY_TOKEN }}&project=Gwion/Gwion" -O cov-analysis-linux64.tar.gz
+        mkdir cov-analysis-linux64
+        tar xzf cov-analysis-linux64.tar.gz --strip 1 -C cov-analysis-linux64
+
+    - name: Build
+      run: |
+        export PATH=`pwd`/cov-analysis-linux64/bin:$PATH
+        cov-build --dir cov-int make
+
+    - name: Submit
+      run: |
+        tar czvf gwion.tgz cov-int
+        curl \
+          --form project=dennecdjay/Gwion \
+          --form token=${{ secrets.COVERITY_TOKEN }} \
+          --form email=astor.jeremie@wanadoo.fr \
+          --form file=@gwion.tgz \
+          --form version=trunk \
+          --form description="strongly timed programming language" \
+          https://scan.coverity.com/builds?project=Gwion/Gwion

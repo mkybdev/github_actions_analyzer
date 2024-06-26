@@ -1,0 +1,245 @@
+name: continuous integration
+
+on:
+ push:
+  branches: [ master ]
+ pull_request:
+  branches: [ master ]
+
+env:
+ # set CMake build type here (Release, Debug, RelWithDebInfo, etc.)
+ BUILD_TYPE: Release
+ # set vcpkg root/installed directories
+ VCPKG_ROOT: C:/vcpkg
+ VCPKG_INSTALLED_DIR: C:/vcpkg/installed
+
+jobs:
+      
+ build:
+  strategy:
+   matrix:
+    os: ['ubuntu-latest', 'windows-latest', 'macos-latest']
+    platform: ['x86', 'x64']
+    exclude:
+     - os: 'ubuntu-latest'
+       platform: 'x86'
+     - os: 'windows-latest'
+       platform: 'x86'
+     - os: 'macos-latest'
+
+  # The CMake configure and build commands are platform agnostic and should work equally
+  # well on Windows or Mac.  You can convert this to a matrix build if you need
+  # cross-platform coverage.
+  # See: https://docs.github.com/en/free-pro-team@latest/actions/learn-github-actions/managing-complex-workflows#using-a-build-matrix
+  runs-on: ${{matrix.os}}
+
+  steps:
+   - name: Checkout
+     uses: actions/checkout@v4
+
+   - name: Checkout submodules
+     run: git submodule update --init --recursive
+
+   - name: Install dependencies (packages) [UNIX]
+     if: ${{ matrix.os=='ubuntu-latest' }}
+     uses: ./.github/actions/install_deps
+     with:
+      os: ${{matrix.os}}
+
+   - name: Install dependencies (packages) [Win32]
+     if: ${{ matrix.os=='windows-latest' }}
+     uses: ./.github/actions/install_deps_win32
+     with:
+      os: ${{matrix.os}}
+
+   - name: Install dependencies (ACE) [UNIX]
+     if: ${{ matrix.os=='ubuntu-latest' }}
+     uses: ./.github/actions/install_ACE
+     with:
+      os: ${{matrix.os}}
+
+#   - name: Install dependencies (ACE) [Win32]
+#     if: ${{ matrix.os=='windows-latest' }}
+#     uses: ./.github/actions/install_ACE_win32
+#     with:
+#      os: ${{matrix.os}}
+
+#   - name: Set environment variables [UNIX]
+#     if: ${{ matrix.os=='ubuntu-latest' }}
+#     run: |
+#          echo "VCPKG_ROOT=$VCPKG_INSTALLATION_ROOT" >> $GITHUB_ENV
+
+#   - name: Set environment variables [Win32]
+#     if: ${{ matrix.os=='windows-latest' }}
+#     run: |
+#          echo "VCPKG_ROOT=$Env:VCPKG_INSTALLATION_ROOT" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append
+
+   - name: Remove Common & ACEStream links [UNIX]
+     if: ${{ matrix.os=='ubuntu-latest' }}
+     run: |
+          sudo rm -f modules/Common
+          sudo rm -f modules/ACEStream
+
+   - name: Remove Common & ACEStream links [Win32]
+     if: ${{ matrix.os=='windows-latest' }}
+     run: |
+          del /F /Q modules\\Common
+          del /F /Q modules\\ACEStream
+     shell: cmd
+
+   - name: Checkout (Common)
+     uses: actions/checkout@v4
+     with:
+      repository: esohns/Common
+      path: modules/Common
+
+   - name: Add Common link [UNIX]
+     if: ${{ matrix.os=='ubuntu-latest' }}
+     run: |
+          cd ..
+          sudo ln -s ACENetwork/modules/Common Common
+
+   - name: Add Common link [Win32]
+     if: ${{ matrix.os=='windows-latest' }}
+     run: |
+          cd ..
+          mklink /D Common ACENetwork\\modules\\Common
+     shell: cmd
+
+   - name: Reset ACE link (Common) [UNIX]
+     if: ${{ matrix.os=='ubuntu-latest' }}
+     run: |
+          sudo rm -f modules/Common/modules/ACE
+          sudo ln -s /usr/include modules/Common/modules/ACE
+
+   - name: Update git sub-modules (Common)
+     run: |
+          cd modules/Common
+          git submodule update --init --recursive
+
+   - name: Configure CMake (Common) [UNIX]
+     if: ${{ matrix.os=='ubuntu-latest' }}
+     run: |
+          cd modules/Common
+          cmake -B ${{github.workspace}}/modules/Common/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
+
+   - name: Configure CMake (Common) [Win32]
+     if: ${{ matrix.os=='windows-latest' }}
+     run: |
+          cd modules\\Common
+          cmake -B ${{github.workspace}}\\modules\\Common\\build -DVCPKG_USE=ON -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
+     shell: cmd
+
+   - name: Build (Common) [UNIX]
+     if: ${{ matrix.os=='ubuntu-latest' }}
+     run: |
+          cd modules/Common
+          cmake --build build --config ${{env.BUILD_TYPE}}
+
+   - name: Build (Common) [Win32]
+     if: ${{ matrix.os=='windows-latest' }}
+     run: |
+          cd modules\\Common
+          cmake --build build --config ${{env.BUILD_TYPE}}
+     shell: cmd
+
+   - name: Checkout (ACEStream)
+     uses: actions/checkout@v4
+     with:
+      repository: esohns/ACEStream
+      path: modules/ACEStream
+
+   - name: Add Common/ACENetwork link (ACEStream) [UNIX]
+     if: ${{ matrix.os=='ubuntu-latest' }}
+     run: |
+          cd modules/ACEStream/modules
+          sudo rm -f Common
+          sudo ln -s ../../Common Common
+          sudo rm -f ACENetwork
+          sudo ln -s ../../.. ACENetwork
+
+   - name: Add ACEStream link [Win32]
+     if: ${{ matrix.os=='windows-latest' }}
+     run: |
+          cd ..
+          mklink /D ACEStream ACENetwork\\modules\\ACEStream
+     shell: cmd
+
+   - name: Reset ACE link (ACEStream) [UNIX]
+     if: ${{ matrix.os=='ubuntu-latest' }}
+     run: |
+          sudo rm -f modules/ACEStream/modules/ACE
+          sudo ln -s /usr/include modules/ACEStream/modules/ACE
+
+   - name: Generate LibreOffice headers (ACEStream) [UNIX]
+     if: ${{ matrix.os=='ubuntu-latest' }}
+     run: |
+          cd modules/ACEStream/src/modules/doc/scripts
+          chmod u+x make_oo_headers.sh
+          sudo ./make_oo_headers.sh
+
+   - name: Generate LibreOffice headers (ACEStream) [Win32]
+     if: ${{ matrix.os=='windows-latest' }}
+     run: |
+          cd modules\\ACEStream\\src\\modules\\doc\\scripts
+          .\\make_oo_headers.cmd
+
+   - name: Apply Patch To (Temporarily) Remove Dependency on ACENetwork  [UNIX]
+     if: ${{ matrix.os=='ubuntu-latest' }}
+     run: |
+          cd modules/ACEStream
+          patch -f -p1 < scripts/github_repo_build.patch
+
+   - name: Apply Patch To (Temporarily) Remove Dependency on ACENetwork [Win32]
+     if: ${{ matrix.os=='windows-latest' }}
+     run: |
+          cd modules\\ACEStream
+          git apply -v --reject --whitespace=fix scripts/github_repo_build.patch
+     shell: cmd
+
+   - name: Update git sub-modules (ACEStream)
+     run: |
+          cd modules/ACEStream
+          git submodule update --init --recursive
+
+   - name: Configure CMake (ACEStream) [UNIX]
+     if: ${{ matrix.os=='ubuntu-latest' }}
+     run: |
+          cd modules/ACEStream
+          cmake -B ${{github.workspace}}/modules/ACEStream/build -DCommon_DIR=modules/Common/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
+
+   - name: Configure CMake (ACEStream) [Win32]
+     if: ${{ matrix.os=='windows-latest' }}
+     run: |
+          cd modules\\ACEStream
+          cmake -B ${{github.workspace}}\\modules\\ACEStream\\build -DCommon_DIR=modules/Common/build -DVCPKG_USE=ON -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
+     shell: cmd
+
+   - name: Build (ACEStream) [UNIX]
+     if: ${{ matrix.os=='ubuntu-latest' }}
+     run: |
+          cd modules/ACEStream
+          cmake --build build --config ${{env.BUILD_TYPE}}
+
+   - name: Build (ACEStream) [Win32]
+     if: ${{ matrix.os=='windows-latest' }}
+     run: |
+          cd modules\\ACEStream
+          cmake --build build --config ${{env.BUILD_TYPE}}
+     shell: cmd
+
+   - name: Configure CMake [UNIX]
+     if: ${{ matrix.os=='ubuntu-latest' }}
+     run: cmake -B ${{github.workspace}}/build -DCommon_DIR=modules/Common/build -DACEStream_DIR=modules/ACEStream/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DUI_FRAMEWORK=gtk -DBUILD_TEST_U=ON -DBUILD_TEST_I=ON
+
+   - name: Configure CMake [Win32]
+     if: ${{ matrix.os=='windows-latest' }}
+     run: cmake -B ${{github.workspace}}/build -DCommon_DIR=modules/Common/build -DACEStream_DIR=modules/ACEStream/build -DVCPKG_USE=ON -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} -DUI_FRAMEWORK=gtk -DBUILD_TEST_U=ON -DBUILD_TEST_I=ON
+     shell: cmd
+
+   - name: Build
+     run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}}
+
+   - name: Test
+     working-directory: ${{github.workspace}}/build
+     run: ctest -C ${{env.BUILD_TYPE}}

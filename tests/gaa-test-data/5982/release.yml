@@ -1,0 +1,80 @@
+# SPDX-FileCopyrightText: 2015-2024 Alexey Rochev
+#
+# SPDX-License-Identifier: CC0-1.0
+
+name: Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  upload-source-archives:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        submodules: 'recursive'
+
+    - name: Upload source archives to release
+      run: |
+        readarray -t archives < <(.github/workflows/make-source-archive.py all)
+        echo "Uploading source archives ${archives[@]}"
+        gh release upload '${{ github.event.release.tag_name }}' "${archives[@]}"
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  upload-debian-source-package:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Check out sources
+      uses: actions/checkout@v4
+      with:
+        submodules: 'recursive'
+
+    - name: Make source archive
+      run: |
+        .github/workflows/make-source-archive.py --output-directory .. --debian gzip
+
+    - name: Check out Debian sources
+      uses: actions/checkout@v4
+      with:
+        repository: equeim/tremotesf-debian
+        ref: ${{ github.event.release.tag_name }}
+        path: tremotesf-debian
+
+    - name: Remove everything except debian/ directory
+      run: |
+        mv tremotesf-debian/debian debian
+        rm -rf tremotesf-debian
+
+    - name: Make source package
+      run: |
+        dpkg-buildpackage --build=source --no-pre-clean
+
+    - name: Upload source package to release
+      run: |
+        shopt -s failglob
+        cd ..
+        files=(tremotesf_*.debian.* tremotesf_*.dsc tremotesf_*.orig.*)
+        archive_filename="$(basename tremotesf_*.dsc .dsc)-debian-source.tar.gz"
+        echo "Archiving ${files[@]} to $archive_filename"
+        tar --create --gzip --file "$archive_filename" "${files[@]}"
+        echo "Uploading artifact $archive_filename"
+        gh release upload --repo '${{ github.repository }}' '${{ github.event.release.tag_name }}' "$archive_filename"
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-windows-msvc:
+    uses: ./.github/workflows/build-windows-msvc.yml
+    with:
+      build-with-msvc-clang-toolchain: 'false'
+      release-tag: ${{ github.event.release.tag_name }}
+
+  build-macos:
+    uses: ./.github/workflows/build-macos.yml
+    with:
+      release-tag: ${{ github.event.release.tag_name }}

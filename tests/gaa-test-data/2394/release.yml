@@ -1,0 +1,64 @@
+on:
+  push:
+    # Sequence of patterns matched against refs/tags
+    tags:
+    - 'v*' # Push events to matching v*, i.e. v1.0, v20.15.10
+
+name: Publish a Release
+
+jobs:
+  create-release:
+    name: Main Job
+    runs-on: ubuntu-latest
+    container:
+      image: docker://dragoncomputer/dragonfire:latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v1
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Dragonfire ${{ github.ref }}
+          body: |
+            Changes in this Release
+            - First Change
+            - Second Change
+          draft: false
+          prerelease: false
+
+      - name: Cache pip packages
+        uses: actions/cache@v1
+        with:
+          path: /root/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/setup.py') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          pip3 install -e .
+
+      - name: Generate the Debian package
+        id: deb-package-generator
+        run: |
+          dpkg-buildpackage -us -uc
+          RELEASE_VERSION=$(echo ${{ github.ref }} | cut -c12-)
+          mv ../dragonfire_${RELEASE_VERSION}_amd64.deb .
+          ls -al
+          echo ::set-output name=filename::dragonfire_${RELEASE_VERSION}_amd64.deb
+
+      - name: Upload the Debian package to Release Assets
+        id: upload-release-asset
+        uses: actions/upload-release-asset@v1.0.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./${{ steps.deb-package-generator.outputs.filename }}
+          asset_name: ${{ steps.deb-package-generator.outputs.filename }}
+          asset_content_type: application/vnd.debian.binary-package

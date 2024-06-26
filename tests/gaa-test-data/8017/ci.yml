@@ -1,0 +1,57 @@
+name: ci
+
+on: [push, pull_request]
+
+jobs:
+  build_linux:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        compiler:
+          - gcc:14
+          - gcc:13
+          - clang:18
+          - clang:17
+    container:
+      image: "registry.gitlab.com/offa/docker-images/${{ matrix.compiler }}"
+    name: "${{ matrix.compiler }}"
+    steps:
+      - uses: actions/checkout@main
+      - name: Install dependencies
+        run: script/ci_install_dependencies.sh
+      - name: Build
+        run: script/ci_build.sh -asan -ubsan
+
+  build_arm:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        compiler:
+          - arm-none-eabi-gcc:12
+        build_config:
+          - {build_type: Debug, lto: OFF}
+          - {build_type: Release, lto: OFF}
+          - {build_type: MinSizeRel, lto: OFF}
+          - {build_type: MinSizeRel, lto: ON}
+    container:
+      image: "registry.gitlab.com/offa/docker-images/${{ matrix.compiler }}"
+    name: "${{ matrix.compiler }} - ${{ matrix.build_config.build_type }} (LTO: ${{ matrix.build_config.lto }})"
+    steps:
+      - uses: actions/checkout@main
+      - name: Build
+        run: |
+          export BUILD_TYPE=${{ matrix.build_config.build_type }}
+          export LTO_ENABLED=${{ matrix.build_config.lto }}
+          export COMPILER=${{ matrix.compiler }}
+          script/ci_build.sh
+
+  formatting-check:
+    name: "formatting"
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@main
+    - uses: DoozyX/clang-format-lint-action@master
+      name: "Verify formatting"
+      with:
+        clangFormatVersion: 17
+        exclude: './system/'

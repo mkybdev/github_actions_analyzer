@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  test:
+    name: Test (Elixir ${{ matrix.elixir }} | Erlang/OTP ${{ matrix.otp }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - otp: "27.0"
+            elixir: "1.17"
+            coverage: true
+            lint: true
+            dialyzer: true
+            os: "ubuntu-22.04"
+
+          - otp: "23.0"
+            elixir: "1.12"
+            os: "ubuntu-20.04"
+
+    env:
+      GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
+      MIX_ENV: test
+
+    steps:
+      - name: Clone this repository
+        uses: actions/checkout@v4
+
+      - name: Install Erlang/OTP and Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ matrix.otp }}
+          elixir-version: ${{ matrix.elixir }}
+          version-type: strict
+
+      - name: Cache built dependencies
+        id: cache-deps
+        uses: actions/cache@v3
+        with:
+          path: |
+            deps
+            _build
+          key:
+            ${{ runner.os }}-mix-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-${{ hashFiles('**/mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-mix-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-
+
+      - name: Install and compile dependencies
+        run: mix do deps.get, deps.compile
+
+      # Don't cache PLTs based on mix.lock hash, as Dialyzer can incrementally update even old ones.
+      # Cache key based on Elixir & Erlang version (also useful when running in matrix).
+      - name: Cache Dialyzer's PLT
+        uses: actions/cache@v3
+        id: cache-plt
+        with:
+          path: plts
+          key: ${{ runner.os }}-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}
+
+      # Create PLTs if no cache was found
+      - name: Create PLTs
+        if: steps.cache-plt.outputs.cache-hit != 'true' && matrix.dialyzer
+        run: mix dialyzer --plt
+
+      - name: Check formatting
+        run: mix format --check-formatted
+        if: ${{ matrix.lint }}
+
+      - name: Check no unused dependencies
+        run: mix do deps.get --only test, deps.unlock --check-unused
+        if: ${{ matrix.lint }}
+
+      - name: Compile with --warnings-as-errors
+        run: mix compile --warnings-as-errors
+        if: ${{ matrix.lint }}
+
+      - name: Run tests
+        run: mix test
+        if: ${{ !matrix.coverage }}
+
+      - name: Run tests with coverage
+        run: mix coveralls.github
+        if: ${{ matrix.coverage }}
+
+      - name: Run Dialyzer
+        if: ${{ matrix.dialyzer }}
+        run: |
+          mkdir -p ./plts
+          mix dialyzer --format github

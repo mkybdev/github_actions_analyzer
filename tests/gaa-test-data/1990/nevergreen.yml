@@ -1,0 +1,84 @@
+name: Nevergreen CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    env:
+      CI: true
+
+    name: Build
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Setup JDK
+        uses: actions/setup-java@v3
+        with:
+          distribution: zulu
+          java-version: 22.0.1
+
+      - name: Install clojure tools-deps
+        uses: DeLaGuardo/setup-clojure@11.0
+        with:
+          lein: 2.9.10
+
+      - name: Clojure - dependencies
+        run: lein deps
+
+      - name: Clojure - tests
+        run: |
+          lein coverage
+          lein lint
+
+      - name: Setup Node
+        uses: actions/setup-node@v3
+        with:
+          node-version: 22.2.0
+
+      - name: node - dependencies
+        run: npm ci
+
+      - name: node - tests
+        run: |
+          npm run check-types
+          npm run test:coverage
+          npm run lint
+
+      - name: Package
+        run: |
+          npm run build:prod
+          lein uberjar
+
+      - name: Run Cypress
+        uses: cypress-io/github-action@v5
+        env:
+          CYPRESS_BASE_URL: 'http://localhost:5000'
+          CYPRESS_TRAY_URL: 'https://raw.githubusercontent.com/build-canaries/nevergreen/main/cctray_xml_feed_mock/resources/cctray.xml'
+          CYPRESS_TRAY_URL_TOKEN: ''
+          CYPRESS_TRAY_TOKEN: ''
+          CYPRESS_TRAY_USERNAME: ''
+          CYPRESS_TRAY_PASSWORD: ''
+        with:
+          start: java -jar target/nevergreen-standalone.jar
+          wait-on: http://localhost:5000
+
+      - name: Store test reports
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: test-reports
+          path: |
+            target/coverage-reports
+            target/test-reports
+
+      - name: Store Nevergreen artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: nevergreen-jar
+          path: target/nevergreen-standalone.jar

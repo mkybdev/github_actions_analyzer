@@ -1,0 +1,37 @@
+name: Basic tests
+
+on: [push, pull_request]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    if: github.event_name != 'push' || github.repository == 'DIRACGrid/DIRAC'
+    timeout-minutes: 30
+    defaults:
+      # Activate the conda environment automatically in each step
+      run:
+        shell: bash -l {0}
+
+    strategy:
+      fail-fast: False
+      matrix:
+        command:
+          - pytest --runslow
+          - tests/runPylint.sh
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: Fail-fast for outdated pipelines
+      run: .github/workflows/fail-fast.sh
+    - uses: conda-incubator/setup-miniconda@master
+      with:
+        environment-file: environment.yml
+        miniforge-variant: Mambaforge
+        use-mamba: true
+    - name: Run tests
+      run: |
+        set -euxo pipefail
+        export PYTHONPATH=${PWD}/src
+        ${{ matrix.command }}
+      env:
+        REFERENCE_BRANCH: ${{ github['base_ref'] || github['head_ref'] }}

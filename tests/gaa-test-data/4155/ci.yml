@@ -1,0 +1,107 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request: {}
+
+concurrency:
+  group: ci-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: "Tests"
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Use Volta
+        uses: volta-cli/action@v4
+      - name: Node Modules Cache
+        id: cache-npm
+        uses: actions/cache@v3
+        with:
+          path: |
+            .npm
+            node_modules/
+          key: ci-npm-${{ hashFiles('package-lock.json') }}
+      - name: Install Dependencies
+        if: steps.cache-npm.outputs.cache-hit != 'true'
+        run: npm ci --cache .npm
+      - name: Lint
+        run: npm run lint
+      - name: Run Tests
+        run: . bin/restore-env.sh && node_modules/.bin/ember test
+
+  floating:
+    name: "Floating Dependencies"
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Use Volta
+        uses: volta-cli/action@v4
+      - name: Install Dependencies
+        run: npm i --cache .npm
+      - name: Run Tests
+        run: CI=true node_modules/.bin/ember test
+
+  try-scenarios:
+    name: ${{ matrix.try-scenario }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+
+    strategy:
+      fail-fast: false
+      matrix:
+        try-scenario:
+          [
+            ember-lts-3.28,
+            ember-lts-4.4,
+            ember-lts-4.8,
+            ember-lts-4.12,
+            ember-lts-5.4,
+            ember-release,
+            ember-beta,
+            ember-canary,
+            ember-3.28-with-jquery,
+            ember-3.28-classic,
+          ]
+        include:
+          - ember-try-scenario: ember-canary
+            allow-failure: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Use Volta
+        uses: volta-cli/action@v4
+      - name: Stash package-lock.json for cache key
+        run: cp package-lock.json __cache-key
+      - name: Node Modules Cache
+        id: cache-npm
+        uses: actions/cache@v3
+        with:
+          path: |
+            .npm
+            node_modules/
+            package.json
+            package-lock.json
+            __env
+          key: ci-npm-v3-${{ matrix.try-scenario }}-${{ hashFiles('config/ember-try.js', '__cache-key') }}
+          restore-keys: |
+            ci-npm-${{ hashFiles('package-lock.json') }}
+      - name: Install Dependencies
+        if: steps.cache-npm.outputs.cache-hit != 'true'
+        run: npm ci --cache .npm
+      - name: Ember-Try Setup
+        if: steps.cache-npm.outputs.cache-hit != 'true'
+        run: node_modules/.bin/ember try:one ${{ matrix.try-scenario }} --skip-cleanup --- bin/stash-env.sh
+      - name: Run Tests
+        run: . bin/restore-env.sh && CI=true node_modules/.bin/ember test

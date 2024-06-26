@@ -1,0 +1,62 @@
+# https://github.com/actions/virtual-environments/
+
+# A template workflow intended for Apple Platform libraries
+
+name: CI
+
+on:
+  push:
+    branches:
+      [master, refactor]
+    paths:
+      - '.github/workflows/ci.yml'
+      - 'Sources/**/*.*'
+      - 'Tests/**/*.*'
+      - 'Example/**/*.*'
+  pull_request:
+    branches:
+      [master]
+    paths:
+      - '.github/workflows/ci.yml'
+      - 'Sources/**/*.*'
+      - 'Tests/**/*.*'
+      - 'Example/**/*.*'
+
+env:
+  PROJECT: TwitchAPIWrapper.xcodeproj
+  SCHEME: TwitchAPIWrapper
+
+  EXAMPLE_PROJECT: Example/TwitchAPIWrapper.xcworkspace
+  EXAMPLE_SCHEME: TwitchAPIWrapper-Example
+
+  IOS_DEST: "platform=iOS Simulator,name=iPhone 12,OS=14.5"
+  IOS_SDK: iphonesimulator14.4
+
+jobs:
+  env-details:
+    name: Environment details
+    runs-on: macOS-latest
+    steps:
+      - name: xcode version
+        run: xcodebuild -version -sdk
+
+      - name: list simulators
+        run: |
+          xcrun simctl delete unavailable
+          xcrun simctl list
+  test-example:
+    name: Example Project Test
+    runs-on: macOS-latest
+    steps:
+      - name: git checkout
+        uses: actions/checkout@v2
+
+      - name: example tests
+        run: |
+          set -o pipefail
+          xcodebuild clean test \
+              -workspace "$EXAMPLE_PROJECT" \
+              -scheme "$EXAMPLE_SCHEME" \
+              -sdk "$IOS_SDK" \
+              -destination "$IOS_DEST" \
+              ONLY_ACTIVE_ARCH=NO CODE_SIGNING_REQUIRED=NO | xcpretty -c

@@ -1,0 +1,56 @@
+name: SSCBuild
+
+on:
+  push:
+    tags:
+      - "v*"
+  pull_request:
+    types: [review_requested]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: microsoft/setup-msbuild@v1.1
+
+      - name: Nuget restore
+        run: nuget restore
+
+      - name: Build client
+        run: msbuild /t:ChatClient:publish /p:Configuration=Release /p:TargetFramework=net6.0-windows /p:RuntimeIdentifier=win10-x64 /p:SelfContained=false /verbosity:minimal
+      - name: Build server
+        run: msbuild /t:ChatServer:publish /p:Configuration=Release /p:TargetFramework=net6.0-windows /p:RuntimeIdentifier=win10-x64 /p:SelfContained=false /verbosity:minimal
+
+      - name: Archive client
+        uses: thedoctor0/zip-release@0.6.2
+        with:
+          type: zip
+          filename: ssc_client-net6.0-windows.zip
+          path: ChatClient/bin/Release/net6.0-windows/win10-x64/publish
+      - name: Archive server
+        uses: thedoctor0/zip-release@0.6.2
+        with:
+          filename: ssc_server-net6.0-windows.zip
+          path: ChatServer/bin/Release/net6.0-windows/win10-x64/publish
+
+      - name: Client artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: client-net6.0-windows
+          path: ssc_client-net6.0-windows.zip
+      - name: Server artifact
+        uses: actions/upload-artifact@v2
+        with:
+          name: server-net6.0-windows
+          path: ssc_server-net6.0-windows.zip
+
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          draft: false
+          prerelease: false
+          files: |
+            ssc_client-net6.0-windows.zip
+            ssc_server-net6.0-windows.zip

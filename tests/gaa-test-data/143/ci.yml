@@ -1,0 +1,98 @@
+name: CI
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+jobs:
+  testOther:
+    name: ${{ matrix.command }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        command:
+          - "++2.13.14; download-scala-library; testsJVM/slow:test"
+          - "communitytest/test"
+          - "mima"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up JVM
+        uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+          cache: 'sbt'
+      - run: sbt '${{ matrix.command }}'
+  testLatestScala:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        type:
+          - 'JVM'
+          - 'JS'
+          - 'Native'
+        scala:
+          - '2.12.19'
+          - '2.13.14'
+        java:
+          - '8'
+          - '21'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up JVM
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ matrix.java }}
+          distribution: 'temurin'
+          cache: 'sbt'
+      - run: sbt ++${{ matrix.scala }} tests${{ matrix.type }}/test
+  testOlderScalaOnJVM:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        scala:
+          - '2.11.12'
+          - '2.12.16'
+          - '2.12.17'
+          - '2.12.18'
+          - '2.13.11'
+          - '2.13.12'
+          - '2.13.13'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Set up JVM
+        uses: actions/setup-java@v4
+        with:
+          java-version: '8'
+          distribution: 'temurin'
+          cache: 'sbt'
+      - run: sbt '++${{ matrix.scala }}!; testsJVM/test'
+  windows:
+    name: Windows tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: olafurpg/setup-scala@v14
+      - run: sbtx ci-windows
+        shell: bash
+  checks:
+    name: Scalafmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JVM
+        uses: actions/setup-java@v4
+        with:
+          java-version: '8'
+          distribution: 'temurin'
+          cache: 'sbt'
+      - run: ./bin/scalafmt --test

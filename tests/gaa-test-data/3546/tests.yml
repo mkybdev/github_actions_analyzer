@@ -1,0 +1,118 @@
+name: "Build & Test"
+on:
+  push:
+  workflow_call:
+    inputs:
+      buildJni:
+        required: false
+        type: string
+        default: 'OFF'
+      buildMacos:
+        required: false
+        type: boolean
+        default: true
+jobs:
+  Unixes:
+    runs-on: ${{ matrix.os }}
+    container:
+      image: ghcr.io/ledgerhq/lib-ledger-core-build-env/lib-ledger-core-build-env:1.0.3
+      credentials:
+        username: ${{ secrets.CI_BOT_USERNAME }}
+        password: ${{ secrets.CI_BOT_TOKEN }}
+    services:
+      postgres:
+        image: postgres:12
+        env:
+          POSTGRES_USER: libcore
+          POSTGRES_PASSWORD: libcore_pwd
+          POSTGRES_DB: test_db
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-20.04, ubuntu-22.04]
+    env:
+      BUILD_JNI: ${{ inputs.buildJni || 'OFF' }}
+    steps:
+    - name: Cancel Previous Runs
+      uses: styfle/cancel-workflow-action@0.9.1
+      with:
+        access_token: ${{ secrets.GITHUB_TOKEN }}
+    - uses: actions/checkout@v2.3.4
+      with:
+        submodules: 'recursive'
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: ${{ matrix.os }}
+        max-size: "3G"
+    - name: Build
+      run: .github/scripts/build.sh
+      env:
+        OPENSSL_ROOT_DIR: /usr/local/opt/openssl/
+        ARGS: '-GNinja'
+    - name: Tests
+      if: env.BUILD_JNI == 'OFF'
+      run: .github/scripts/test.sh
+      env:
+        POSTGRES_HOST: postgres
+        POSTGRES_PORT: 5432
+        POSTGRES_USER: libcore
+        POSTGRES_PASSWORD: libcore_pwd
+        POSTGRES_DB: test_db
+    - uses: actions/upload-artifact@v2
+      with:
+        name: linux-${{ matrix.os }}-libledgercore
+        path: _build_tests/core/src/libledger-core.so
+        retention-days: 30
+
+  Macos:
+    if: ${{ github.event_name == 'push' || inputs.macos }}
+    runs-on: macos-12
+    env:
+      BUILD_JNI: ${{ inputs.buildJni || 'OFF' }}
+    steps:
+      - name: Cancel Previous Runs
+        uses: styfle/cancel-workflow-action@0.9.1
+        with:
+          access_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/checkout@v2.3.4
+        with:
+          submodules: 'recursive'
+      - name: Setup Macos
+        run: |
+          brew install openssl
+          brew install postgresql@13
+          brew link --overwrite postgresql@13
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: macos
+          max-size: "3G"
+      - name: Prepare DB
+        run: |
+          mkdir test_db
+          initdb -D test_db
+          pg_ctl start -D test_db -l db_log -o "-i -h localhost -p 5432"
+          createdb -h localhost -p 5432 test_db
+      - name: Build
+        run: .github/scripts/build.sh
+        env:
+          OPENSSL_ROOT_DIR: /usr/local/opt/openssl/
+          ARGS:
+      - name: Tests
+        if: env.BUILD_JNI == 'OFF'
+        run: .github/scripts/test.sh
+        env:
+          POSTGRES_HOST: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_DB: test_db
+      - uses: actions/upload-artifact@v2
+        with:
+          name: macos-libledgercore
+          path: _build_tests/core/src/libledger-core.dylib
+          retention-days: 30

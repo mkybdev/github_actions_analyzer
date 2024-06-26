@@ -1,0 +1,42 @@
+name: CI
+on:
+  pull_request:
+  push:
+  schedule:
+  - cron: '0 21 * * 0'
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            java: 8
+            distribution: temurin
+          - os: ubuntu-latest
+            java: 21
+            distribution: temurin
+          - os: ubuntu-latest
+            java: 22-ea
+            distribution: temurin
+          - os: windows-latest
+            java: 11
+            distribution: temurin
+    env:
+      # define Java options for both official sbt and sbt-extras
+      JAVA_OPTS: -Xms2048M -Xmx2048M -Xss6M -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
+      JVM_OPTS:  -Xms2048M -Xmx2048M -Xss6M -XX:ReservedCodeCacheSize=256M -Dfile.encoding=UTF-8
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup JDK
+      uses: actions/setup-java@v3
+      with:
+        distribution: "${{ matrix.distribution }}"
+        java-version: "${{ matrix.java }}"
+        cache: sbt
+    - name: Build and test
+      shell: bash
+      run: |
+        sbt -v clean scripted

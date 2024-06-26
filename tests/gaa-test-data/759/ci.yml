@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+jobs:
+  build:
+    name: Okbuck CI Checks
+    env:
+      SKIP_OKBUCK: true
+      EXTRA_OKBUCK_ARGS: "--quiet --stacktrace"
+      EXTRA_BUCK_ARGS: "-v 0"
+    runs-on: ubuntu-20.04
+    strategy:
+      matrix:
+        build_cmd: [build, lint, test]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v1
+      - name: Install JDK
+        uses: actions/setup-java@v1
+        with:
+          java-version: 11
+      - name: Run ${{ matrix.build_cmd }}
+        run: ./tooling/ci/build_cmd.sh ${{ matrix.build_cmd }}
+      - name: Upload snapshot
+        run: ./gradlew publish -PmavenCentralUsername="${{ secrets.SonatypeUsername }}" -PmavenCentralPassword="${{ secrets.SonatypePassword }}"
+        if: success() && github.ref == 'refs/heads/master' && github.event_name != 'pull_request'

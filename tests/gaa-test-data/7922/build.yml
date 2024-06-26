@@ -1,0 +1,56 @@
+name: Build
+on:
+  # Trigger the workflow on push or pull request,
+  # but only for the main branch
+  push:
+    branches:
+      - nightly
+  pull_request:
+    branches:
+      - nightly
+jobs:
+  build:
+    name: Build
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ windows-latest, ubuntu-latest ]
+    steps:
+      - name: Get the sources
+        uses: actions/checkout@v4
+
+      - name: Fetch all history for all tags and branches
+        run: git fetch --prune --unshallow
+
+      - name: Install .NET Core SDK 8.0
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0'
+
+      - name: Install Dotnet Tools
+        run: dotnet tool restore
+
+      - name: Run Fake, up to Reports
+        if: github.ref == 'refs/heads/nightly'
+        run: dotnet run -- Report
+
+      - name: Run Fake, up to Tests
+        if: github.ref != 'refs/heads/nightly'
+        run: dotnet run -- Test
+
+      - name: Upload codecov
+        if: runner.os == 'Linux'
+        run: |
+          curl -Os https://uploader.codecov.io/latest/linux/codecov
+          chmod +x codecov
+          ./codecov
+
+      - name: Archive code coverage results
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: code-coverage-report
+          path: coveragereport
+
+        

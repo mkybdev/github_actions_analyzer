@@ -1,0 +1,114 @@
+name: json-store
+on: [push, pull_request]
+
+env:
+  pip-cache-key: 2023.02.03
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: pip cache
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ github.job }}-${{ env.pip-cache-key }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: pre-commit cache
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pre-commit
+          key: ${{ runner.os }}-pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pre-commit-
+
+      - name: Display Python version
+        run: python -c "import sys; print(sys.version)"
+
+      - name: Install ${{ github.job }} dependencies
+        run: pip install --disable-pip-version-check pre-commit
+
+      - name: Run pre-commit tests
+        run: pre-commit run -a
+
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: pip cache
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ github.job }}-${{ env.pip-cache-key }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Display Python version
+        run: python -c "import sys; print(sys.version)"
+
+      - name: Upgrade pip and setuptools
+        run: python -m pip install --upgrade pip setuptools
+
+      - name: Install ${{ github.job }} dependencies
+        run: pip --disable-pip-version-check install wheel build
+
+      - name: Build package
+        run: python -m build
+
+      - name: Store build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: dist
+          path: dist
+
+  test:
+    needs: [lint, build]
+    runs-on: ubuntu-latest
+    strategy:
+      # You can use PyPy versions in python-version.
+      # For example, pypy-2.7 and pypy-3.8
+      matrix:
+        python-version: ["2.7", "3.7", "3.8", "3.9", "3.10", "3.11", "pypy-3.9"]
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: pip cache
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ github.job }}-${{ env.pip-cache-key }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: dist
+          path: dist
+
+      - name: Install ${{ github.job }} dependencies
+        run: |
+          pip install --disable-pip-version-check pytest
+
+      - name: Install json-store package
+        run: |
+          pip install --disable-pip-version-check dist/json_store-*.whl
+
+      - name: Test with pytest
+        run: pytest
+
+      - name: Test shelve2json
+        run: sh tests/test_shelve2json.sh

@@ -1,0 +1,23 @@
+name: Run tests
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        distribution: ['zulu']
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        version: [ 11, 17, 21, 22 ]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/setup-java@v4
+        with:
+          distribution: ${{ matrix.distribution }}
+          java-version: ${{ matrix.version }}
+      - run: mvn test -B
+      # This is after the test run to work around
+      # https://issues.apache.org/jira/projects/MJAVADOC/issues/MJAVADOC-736
+      - run: mvn javadoc:javadoc

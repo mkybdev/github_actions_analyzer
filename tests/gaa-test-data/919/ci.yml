@@ -1,0 +1,91 @@
+env:
+  RUBY_VERSION: '2.7'
+  RAILS_ENV: ci
+  POSTGRES_USER: postgres
+  POSTGRES_PASSWORD: postgres
+
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  setup:
+    name: Bundle & cache
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/cache-restore
+        id: cache-bundler
+        with:
+          ruby-version: ${{ env.RUBY_VERSION }}
+      - run: |
+          bundle install --jobs 4 --retry 3 --path vendor/bundle
+        # Install dependencies only if there were not found in the cache
+        if: steps.cache-bundler.outputs.cache-hit != 'true'
+
+  lint:
+    name: Lint
+    needs: setup
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/cache-restore
+        id: cache-bundler
+        with:
+          ruby-version: ${{ env.RUBY_VERSION }}
+
+      - name: Install Gems
+        run: bundle install --jobs 4 --retry 3 --path vendor/bundle
+
+      - name: Run linters
+        run: |
+          bundle exec rubocop
+          bundle exec rails_best_practices .
+          bundle exec bundle-audit check --update
+          bundle exec brakeman
+
+  rspec:
+    name: RSpec
+    needs: setup
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:11
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_USER: ${{ env.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ env.POSTGRES_PASSWORD }}
+        # needed because the postgres container does not provide a healthcheck
+        options: --health-cmd pg_isready --health-interval 10s --health-timeout 5s --health-retries 5
+    steps:
+      - uses: actions/checkout@v3
+      - uses: ./.github/actions/cache-restore
+        id: cache-bundler
+        with:
+          ruby-version: ${{ env.RUBY_VERSION }}
+
+      - name: Install Gems
+        run: bundle install --jobs 4 --retry 3 --path vendor/bundle
+
+      - name: Install postgres client
+        run: sudo apt-get install libpq-dev
+
+      - name: Setup DB
+        env:
+          RAILS_ENV: ${{ env.RAILS_ENV }}
+          POSTGRES_USER: ${{ env.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ env.POSTGRES_PASSWORD }}
+        run: |
+          cp config/database.yml.github-actions config/database.yml
+          bundle exec rake db:create
+          bundle exec rake db:schema:load
+
+      - name: Run RSpec
+        env:
+          RAILS_ENV: ${{ env.RAILS_ENV }}
+          POSTGRES_USER: ${{ env.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ env.POSTGRES_PASSWORD }}
+        run: bundle exec rspec

@@ -1,0 +1,49 @@
+name: build ⚙️
+
+on:
+  push:
+    branches:
+    - master
+  pull_request:
+    branches:
+    - master
+  schedule:
+    - cron: '30 5 * * *'
+
+# Required shell entrypoint to have properly configured bash shell
+defaults:
+  run:
+    shell: bash -l {0}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.8", "3.9", "3.10", "3.11", "3.12"]
+      fail-fast: false
+    name: Python ${{ matrix.python-version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: conda-incubator/setup-miniconda@v2
+        with:
+          activate-environment: esgf-pyclient
+          environment-file: environment.yml
+          python-version: ${{ matrix.python-version }}
+          miniforge-version: "latest"
+          miniforge-variant: Mambaforge
+          use-mamba: true
+      - run: conda --version
+      - run: python -V
+      - name: Install 📦
+        run: pip install -e .[develop]
+      - name: Lint with flake8 ⚙️
+        run: flake8
+      - name: Run tests
+        run: pytest
+      - name: Test notebooks ⚙️
+        run: make test-nb
+      - name: Build docs 🏗️
+        run: make docs

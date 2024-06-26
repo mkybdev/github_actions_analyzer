@@ -1,0 +1,28 @@
+name: Build (stack)
+
+on:
+  push:
+    branches:
+    - master
+    - experimental
+  pull_request:
+    branches:
+    - master
+
+jobs:
+  stack:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        ghc-ver: [9.8.2, 9.6.4, 9.4.8, 9.2.8, 9.0.2, 8.10.7, 8.8.4, 8.6.5, 8.4.4, 8.2.2, 8.0.2]
+
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v2
+    - uses: haskell/actions/setup@v2
+      with:
+        ghc-version: ${{ matrix.ghc-ver }}
+        enable-stack: true
+    - name: Build 
+      run: stack build --stack-yaml=stack-${{ matrix.ghc-ver }}.yaml --no-terminal --system-ghc

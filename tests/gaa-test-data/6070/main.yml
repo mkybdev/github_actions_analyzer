@@ -1,0 +1,57 @@
+name: CI tests
+
+on:
+  pull_request:
+    paths-ignore:
+      - 'doc/*'
+      - 'docker/*'
+      - 'media/*'
+      - '*.md'
+  push:
+    paths-ignore:
+      - 'doc/*'
+      - 'docker/*'
+      - 'media/*'
+      - '*.md'
+
+env:
+  SHELL: bash
+
+jobs:
+  run-tests:
+    name: Test on ubuntu-latest
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.event.pull_request.base.repo.full_name
+    steps:
+    - name: Install packages
+      run: |
+        sudo apt update
+        sudo apt install \
+          moreutils \
+          texlive texlive-latex-extra texlive-extra-utils \
+          texlive-bibtex-extra libtext-bibtex-perl \
+          texlive-publishers \
+          latexmk \
+          libmodule-build-perl \
+          libconfig-autoconf-perl \
+          libextutils-libbuilder-perl
+    - uses: jdx/mise-action@v2
+      with:
+        tool_versions: |
+          neovim 0.9.5
+          vim 9.1.0
+    - uses: actions/checkout@master
+      with:
+        fetch-depth: 1
+    - name: Test with neovim
+      working-directory: ./test
+      run: |
+        mise use neovim
+        make -j1
+    - name: Test with vim
+      env:
+        MYVIM: vim -T dumb --not-a-term -n
+      working-directory: ./test
+      run: |
+        mise use vim
+        make -j1

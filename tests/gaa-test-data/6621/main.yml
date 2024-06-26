@@ -1,0 +1,64 @@
+name: Main
+
+on: push
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Setup Android NDK
+        uses: nttld/setup-ndk@v1
+        id: setup-ndk
+        with:
+          ndk-version: r21e
+          add-to-path: false
+      - name: Build x86
+        run: |
+          bazel build --copt=-O3 waterfall/golang/server:server_bin --platforms=@io_bazel_rules_go//go/toolchain:android_386_cgo \
+          --crosstool_top=@androidndk//:default_crosstool --host_crosstool_top=@bazel_tools//tools/cpp:toolchain  \
+          --spawn_strategy=standalone --cpu=x86 && cp bazel-bin/waterfall/golang/server/server_bin_/server_bin server_bin_386
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+      - name: Release x86
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: server_bin_386
+      - name: Build x86_64
+        run: |
+          bazel build --copt=-O3 --use_top_level_targets_for_symlinks //waterfall/golang/server:server_bin_amd64 && \
+           cp bazel-bin/waterfall/golang/server/server_bin_amd64_/server_bin_amd64 server_bin_amd64
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+      - name: Release x86_64
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: server_bin_amd64
+      # ARM build is broken in the latest build of io_go_rules: https://github.com/bazelbuild/rules_go/issues/3728
+      # - name: Build arm
+      #   run: |
+      #     bazel build --copt=-O3 waterfall/golang/server:server_bin --platforms=@io_bazel_rules_go//go/toolchain:android_arm_cgo \
+      #     --crosstool_top=@androidndk//:default_crosstool --host_crosstool_top=@bazel_tools//tools/cpp:toolchain  \
+      #     --spawn_strategy=standalone --cpu=armeabi-v7a && cp bazel-bin/waterfall/golang/server/server_bin_/server_bin server_bin_arm
+      #   env:
+      #     ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+      # - name: Release arm
+      #   uses: softprops/action-gh-release@v1
+      #   if: startsWith(github.ref, 'refs/tags/')
+      #   with:
+      #     files: server_bin_arm
+      - name: Build arm64
+        run: |
+          bazel build --copt=-O3 waterfall/golang/server:server_bin --platforms=@io_bazel_rules_go//go/toolchain:android_arm64_cgo \
+          --crosstool_top=@androidndk//:default_crosstool --host_crosstool_top=@bazel_tools//tools/cpp:toolchain  \
+          --spawn_strategy=standalone --cpu=arm64-v8a && cp bazel-bin/waterfall/golang/server/server_bin_/server_bin server_bin_arm64
+        env:
+          ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
+      - name: Release arm64
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          files: server_bin_arm64

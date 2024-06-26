@@ -1,0 +1,43 @@
+name: Tests
+
+env:
+  PROJECT_PATH:  "./KF2 Workshop URL Converter/"
+  SOLUTION_PATH: "./KF2 Workshop URL Converter/KF2 Workshop URL Converter.sln"
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "!**" # Excluding all files & paths.
+      - "KF2 Workshop URL Converter/**" # Adding only the project path to run tests.
+      - ".github/workflows/tests.yml"   #To Test updates on this workflow file.
+  pull_request:
+    paths:
+      - "!**" # Excluding all files & paths.
+      - "KF2 Workshop URL Converter/**" # Adding only the project path to run tests.
+      - ".github/workflows/tests.yml"   #To Test updates on this workflow file.
+
+jobs:
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Setup .NET Core
+        uses: actions/setup-dotnet@v1
+        with:
+            dotnet-version: 5.0.101
+      - name: Install Dependencies
+        run: dotnet restore "${{ env.SOLUTION_PATH }}"
+      - name: Run Tests with Coverage
+        run: dotnet test "${{ env.SOLUTION_PATH }}" --nologo --no-restore --logger "console;verbosity=detailed" 
+                --collect:"XPlat Code Coverage" --settings:"${{ env.PROJECT_PATH }}/KF2WorkshopUrlConverter.Test/test.runsettings"
+      - name: Get Coverage File Path
+        shell: bash
+        run: echo "COVERAGE_PATH=$(ls '${{ env.PROJECT_PATH }}'KF2WorkshopUrlConverter.Test/TestResults/$(ls '${{ env.PROJECT_PATH }}'KF2WorkshopUrlConverter.Test/TestResults/)/coverage.info)" >> $GITHUB_ENV
+      - name: Coveralls
+        uses: coverallsapp/github-action@master
+        with:
+            github-token: ${{ secrets.GITHUB_TOKEN }}
+            path-to-lcov: ${{ env.COVERAGE_PATH }}

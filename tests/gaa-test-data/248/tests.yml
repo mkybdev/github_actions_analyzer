@@ -1,0 +1,48 @@
+name: Tests
+
+on: [push, pull_request]
+
+jobs:
+  test:
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ 'ubuntu-latest', 'macos-latest' ]
+        python: [ '3.6', '3.7', '3.8', '3.9', '3.10', 'pypy-3.6', 'pypy-3.7', 'pypy-3.8' ]
+
+    runs-on: ${{ matrix.os }}
+
+    name: ${{ matrix.os }} - python ${{ matrix.python }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Set up pip cache
+        uses: actions/cache@v2
+        with:
+          path: ~/.cache/pip
+          key: ${{ matrix.os }}-pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install tox tox-gh-actions
+
+      - name: Run tests
+        run: tox
+
+      - name: Publish code coverage to CodeClimate
+        uses: paambaati/codeclimate-action@v3.0.0
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.10'
+        continue-on-error: true
+        with:
+          coverageLocations: ${{github.workspace}}/build/tests/*/reports/coverage.xml:coverage.py
+        env:
+          CC_TEST_REPORTER_ID: ${{ secrets.CC_TEST_REPORTER_ID }}

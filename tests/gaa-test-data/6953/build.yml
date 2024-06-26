@@ -1,0 +1,23 @@
+name: Build
+
+on: [pull_request, push]
+
+jobs:
+  carthage:
+    name: Carthage
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: AckeeCZ/load-xcode-version@v1
+      - uses: actions/cache@v4
+        with:
+          path: Carthage
+          key: ${{ runner.os }}-carthage-${{ hashFiles('**/Cartfile.resolved') }}
+          restore-keys: |
+            ${{ runner.os }}-carthage-
+      - name: Build dependencies
+        env:
+          GITHUB_ACCESS_TOKEN: ${{ secrets.CI_PERSONAL_ACCESS_TOKEN }}
+        run: carthage bootstrap --cache-builds --use-xcframeworks --platform iOS
+      - name: Build
+        run: carthage build --cache-builds --use-xcframeworks --no-skip-current --no-use-binaries  --platform iOS

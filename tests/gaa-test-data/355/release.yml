@@ -1,0 +1,42 @@
+name: Create release on push to master
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: DeLaGuardo/setup-clj-kondo@master
+        with:
+          version: '2024.05.24'
+
+      - uses: DeLaGuardo/setup-clojure@12.5
+        with:
+          tools-deps: '1.11.3.1463'
+
+      - name: Run checks
+        run: make checks
+
+      - name: Run tests
+        run: make test
+
+      - name: Make archive with issues
+        run: make release
+
+      - name: get shortsha
+        id: vars
+        run: |
+          echo ::set-output name=sha_short::$(git rev-parse --short=7 ${{ github.sha }})
+
+      - name: Release issues
+        uses: 'marvinpinto/action-automatic-releases@latest'
+        if: ${{ !contains(github.event.pull_request.title, 'bump') || !contains(github.event.pull_request.title, 'Bump') }}
+        with:
+          repo_token: '${{ secrets.GITHUB_TOKEN }}'
+          automatic_release_tag: ${{ steps.vars.outputs.sha_short }}
+          prerelease: false
+          title: 'Issues'
+          files: ./issues.tar.gz

@@ -1,0 +1,257 @@
+on: [pull_request, push, merge_group]
+name: ci
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  check-pr:
+    name: validate commits
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
+        fetch-depth: 0
+    - run: git fetch origin master
+    - uses: flux-framework/pr-validator@master
+
+  spelling:
+    runs-on: ubuntu-20.04
+    steps:
+    - uses: actions/checkout@v4
+    - name: Check Spelling
+      uses: crate-ci/typos@bcafd462cb07ef7ba57e34abf458fe20767e808b # v1.19.0
+
+  python-lint:
+    name: python linting
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/setup-python@v5
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
+        fetch-depth: 0
+    - name: install linting and formatting deps
+      run: pip install -r scripts/requirements-dev.txt
+    - name: format and linting checks
+      run: pre-commit run --all-files
+
+  check-sched:
+    needs: [python-lint]
+    name: flux-sched check
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
+        fetch-depth: 0
+    - run: git fetch --tags || true
+    - run: >
+        src/test/docker/docker-run-checks.sh --install-only \
+          --tag=fluxrm/flux-core:bookworm
+    - run: >
+        cd .. && git clone https://github.com/flux-framework/flux-sched &&
+        cd flux-sched &&
+        src/test/docker/docker-run-checks.sh -j 4 -i bookworm -- CXXFLAGS=-Wno-error=maybe-uninitialized
+
+  check-accounting:
+    needs: [python-lint]
+    name: flux-accounting check
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
+        fetch-depth: 0
+    - run: >
+        src/test/docker/docker-run-checks.sh --image=el8 --install-only \
+          --tag=fluxrm/flux-core:el8
+    - run: >
+        cd .. && git clone https://github.com/flux-framework/flux-accounting &&
+        cd flux-accounting && src/test/docker/docker-run-checks.sh -j 4
+
+  check-pmix:
+    needs: [python-lint]
+    name: flux-pmix check
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
+        fetch-depth: 0
+    - run: >
+        src/test/docker/docker-run-checks.sh
+        --image=el8
+        --install-only
+        --tag=fluxrm/flux-core:el8
+    - run: >
+        cd .. &&
+        git clone https://github.com/flux-framework/flux-pmix &&
+        cd flux-pmix &&
+        src/test/docker/docker-run-checks.sh -j 4 -i el8
+        --build-arg OMPI_BRANCH=v5.0.0rc12
+        --build-arg OPENPMIX_BRANCH=v4.2.3
+
+  check-pam:
+    needs: [python-lint]
+    name: flux-pam check
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
+        fetch-depth: 0
+    - run: >
+        src/test/docker/docker-run-checks.sh
+        --image=el8
+        --install-only
+        --tag=fluxrm/flux-core:el8
+    - run: >
+        cd .. &&
+        git clone https://github.com/flux-framework/flux-pam &&
+        cd flux-pam &&
+        src/test/docker/docker-run-checks.sh -j 4 -i el8
+
+  generate-matrix:
+    # https://stackoverflow.com/questions/59977364
+    name: Generate build matrix
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
+        fetch-depth: 0
+    - id: set-matrix
+      run: echo "matrix=$(src/test/generate-matrix.py)" >> $GITHUB_OUTPUT
+    - run: src/test/generate-matrix.py | jq -S .
+    - run: echo "GITHUB_BRANCH=${GITHUB_REF#refs/heads}" >> $GITHUB_OUTPUT
+    - run: echo "GITHUB_TAG=${GITHUB_REF#refs/tags}" >> $GITHUB_OUTPUT
+    - run: echo "EVENT_NAME=${{ github.event_name }}" >> $GITHUB_OUTPUT
+
+  ci-checks:
+    needs: [generate-matrix]
+    runs-on: ubuntu-latest
+    env:
+      TAP_DRIVER_QUIET: 1
+      FLUX_TEST_TIMEOUT: 300
+      DOCKER_REPO: fluxrm/flux-core
+      DOCKER_USERNAME: travisflux
+      DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_TRAVISFLUX_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    timeout-minutes: 90
+    strategy:
+      matrix: ${{fromJson(needs.generate-matrix.outputs.matrix)}}
+      fail-fast: false
+    name: ${{matrix.name}}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.pull_request.head.sha }}
+        fetch-depth: 0
+
+    - name: fetch annotated tag
+      if: >
+        (matrix.create_release || matrix.docker_tag) &&
+        github.ref != 'refs/heads/master'
+      run: |
+        # Ensure git-describe works on a tag.
+        #  (checkout@v4 action may have left current tag as
+        #   lightweight instead of annotated. See
+        #   https://github.com/actions/checkout/issues/290)
+        #
+        echo github.ref == ${{ github.ref }} ;
+        git fetch -f origin ${{ github.ref }}:${{ github.ref }} ;
+        echo git describe now reports $(git describe --always)
+
+    - name: coverage setup
+      env: ${{matrix.env}}
+      if: matrix.coverage
+      run: |
+        # Use python3 coverage to match version in flux docker image
+        sudo apt update ; \
+        sudo apt install -yy python3-pip ; \
+        pip3 install --upgrade pip ;
+        pip3 install --upgrade --force-reinstall coverage ;
+
+    - name: s3 setup
+      env: ${{matrix.env}}
+      if: matrix.test_s3
+      run: |
+        docker run -d -p 9000:9000 minio/minio server /data; \
+
+    - name: generate dumpfile from most recent flux-core tag
+      if: (matrix.create_release != true)
+      run: |
+        src/test/create-kvs-dumpfile.sh -d /tmp/dumpfile &&
+        if test -f /tmp/dumpfile/*.bz2; then
+            cp /tmp/dumpfile/*.tar.bz2 $(pwd)/t/job-manager/dumps/valid
+        fi
+
+    - name: docker buildx
+      uses: docker/setup-buildx-action@v3
+      if: matrix.needs_buildx
+
+    - name: setup qemu-user-static
+      run: |
+        docker run --rm --privileged aptman/qus -s -- -p --credential aarch64
+
+    - name: docker-run-checks
+      env: ${{matrix.env}}
+      run: ${{matrix.command}}
+
+    - name: annotate errors
+      if: failure() || cancelled()
+      env: ${{matrix.env}}
+      run: src/test/checks-annotate.sh
+
+    - name: coverage report
+      if: success() && matrix.coverage
+      env:
+        DOCKER_REPO:
+      uses: codecov/codecov-action@v4
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        flags: ${{matrix.coverage_flags}}
+
+    - name: docker deploy
+      if: success() && matrix.docker_tag
+      env: ${{matrix.env}}
+      run: src/test/docker-deploy.sh
+
+    - name: create release
+      id: create_release
+      if: |
+        success()
+        && matrix.create_release
+        && github.repository == 'flux-framework/flux-core'
+      env: ${{matrix.env}}
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ matrix.tag }}
+        name: flux-core ${{ matrix.tag }}
+        prerelease: true
+        files: flux-core*.tar.gz
+        body: |
+          View [Release Notes](https://github.com/${{ github.repository }}/blob/${{ matrix.tag }}/NEWS.md) for flux-core ${{ matrix.tag }}
+
+  generate-manifest:
+    name: Generate docker manifest
+    runs-on: ubuntu-latest
+    needs: [ci-checks]
+    env:
+      DOCKER_REPO: fluxrm/flux-core
+      DOCKER_USERNAME: travisflux
+      DOCKER_PASSWORD: ${{ secrets.DOCKER_HUB_TRAVISFLUX_TOKEN }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+    - name: make and push manifest as fluxrm/flux-core
+      if: >
+        (startsWith(github.ref, 'refs/tags/') || github.ref == 'refs/heads/master')
+      run: |
+        echo "$DOCKER_PASSWORD" | docker login -u "$DOCKER_USERNAME" --password-stdin
+        docker manifest create fluxrm/flux-core:bookworm fluxrm/flux-core:bookworm-amd64 fluxrm/flux-core:bookworm-386 fluxrm/flux-core:bookworm-arm64
+        docker manifest push fluxrm/flux-core:bookworm
+

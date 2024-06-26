@@ -1,0 +1,138 @@
+{{- $ghcrhost := "ghcr.io" }}
+{{- $ghcrns := print $ghcrhost "/hairyhenderson" }}
+name: Docker Build
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: '42 2 * * 2'
+
+jobs:
+{{- range $dir := .dir }}
+{{- $isDir := file.IsDir $dir -}}
+{{ $hasDockerfile := file.Exists (filepath.Join $dir "Dockerfile") -}}
+{{ $notHidden := not (strings.HasPrefix "." .) -}}
+{{ $noIgnore := not (file.Exists (filepath.Join $dir ".ignore")) -}}
+{{ $hasNeeds := file.Exists (filepath.Join $dir ".needs") -}}
+{{ if and $isDir $hasDockerfile $notHidden $noIgnore }}
+  {{- $tagargsfile := filepath.Join $dir ".tag-args"}}
+  {{- $tagargs := jsonArray `[{"tags": ["latest"], "args": {}}]` }}
+  {{- if file.Exists $tagargsfile }}
+    {{- $tagargs = (file.Read $tagargsfile) | yamlArray }}
+  {{- end }}
+  docker-build-{{ $dir }}:
+    name: docker build {{ $dir }}
+    {{- if $hasNeeds }}
+    needs:
+    {{- /** read through the .needs file, split by comma, and prefix each name with docker-build- */}}
+    {{- $needs := (file.Read (filepath.Join $dir ".needs")) | strings.TrimSpace | strings.Split "," }}
+    {{- range $i, $n := $needs }}
+    - docker-build-{{ $n }}
+    {{- end }}
+    {{- end }}
+    runs-on: ubuntu-22.04
+    env:
+      DOCKER_BUILDKIT: 1
+      DOCKER_CLI_EXPERIMENTAL: enabled
+    steps:
+    - name: enable experimental mode
+      run: |
+        mkdir -p ~/.docker
+        echo '{"experimental": "enabled"}' > ~/.docker/config.json
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - name: Set up QEMU
+      uses: docker/setup-qemu-action@v3.0.0
+    - name: Set up Docker Buildx
+      id: buildx
+      uses: docker/setup-buildx-action@v3.3.0
+      with:
+        version: v0.12.0
+        driver-opts: |
+          image=moby/buildkit:buildx-stable-1
+          network=host
+    - name: Available platforms
+      run: echo {{ `${{ steps.buildx.outputs.platforms }}` }}
+    - name: Build (non-main branch)
+      run: |
+        {{- range $a := $tagargs }}
+        docker buildx build{{range $k, $v := $a.args}} --build-arg {{$k}}={{$v}}{{end}} --tag {{ $ghcrns }}/{{ $dir }}:{{ `${{ github.sha }}` }} --load {{ $dir }}/
+        {{- end }}
+      if: github.repository == 'hairyhenderson/dockerfiles'
+    - name: Run Trivy vulnerability scanner (table output)
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: '{{ $ghcrns }}/{{ $dir }}:{{ `${{ github.sha }}` }}'
+        format: 'table'
+        exit-code: 1
+        ignore-unfixed: true
+        vuln-type: 'os,library'
+        severity: 'CRITICAL,HIGH'
+        trivyignores: .trivyignore
+    - name: Run Trivy vulnerability scanner
+      uses: aquasecurity/trivy-action@master
+      with:
+        image-ref: '{{ $ghcrns }}/{{ $dir }}:{{ `${{ github.sha }}` }}'
+        format: 'sarif'
+        output: 'trivy-results.sarif'
+        # exit-code: 1
+        ignore-unfixed: true
+        vuln-type: 'os,library'
+        # The SARIF format ignores severity and uploads all vulnerabilities for
+        # later triage. The table-format step above is used to fail the build if
+        # there are any critical or high vulnerabilities.
+        # See https://github.com/aquasecurity/trivy-action/issues/95
+        # severity: 'CRITICAL,HIGH'
+        trivyignores: .trivyignore
+      if: always() && github.repository == 'hairyhenderson/dockerfiles'
+    - name: Upload Trivy scan results to GitHub Security tab
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: 'trivy-results.sarif'
+      if: always() && github.repository == 'hairyhenderson/dockerfiles'
+    - name: Login to GHCR
+      uses: docker/login-action@v3.2.0
+      with:
+          registry: ghcr.io
+          username: '{{ `${{ github.actor }}` }}'
+          password: '{{ `${{ secrets.GHCR_TOKEN }}` }}'
+      if: github.repository == 'hairyhenderson/dockerfiles' && github.actor == 'hairyhenderson' && github.ref == 'refs/heads/main'
+    - name: Login to DockerHub
+      uses: docker/login-action@v3.2.0
+      with:
+          username: '{{ `${{ github.actor }}` }}'
+          password: '{{ `${{ secrets.DOCKERHUB_TOKEN }}` }}'
+      if: github.repository == 'hairyhenderson/dockerfiles' && github.actor == 'hairyhenderson' && github.ref == 'refs/heads/main'
+    - name: Build & Push (main branch)
+      run: |
+        {{- if file.Exists (filepath.Join $dir ".docker-platforms") }}
+        PLATFORMS={{ file.Read (filepath.Join $dir ".docker-platforms") | strings.TrimSpace }}
+        {{- else }}
+        PLATFORMS=linux/amd64,linux/arm64,linux/arm/v6,linux/arm/v7
+        {{- end }}
+
+        {{- range $a := $tagargs }}
+
+        docker buildx build{{range $k, $v := $a.args}} --build-arg {{$k}}={{$v}}{{end}} \
+          --platform $PLATFORMS \
+          --tag {{ $ghcrns }}/{{ $dir }}:{{ `${{ github.sha }}` }} --push {{ $dir }}/
+        docker buildx build{{range $k, $v := $a.args}} --build-arg {{$k}}={{$v}}{{end}} \
+          --platform $PLATFORMS \
+          --tag hairyhenderson/{{ $dir }}:{{ `${{ github.sha }}` }} --push {{ $dir }}/
+
+          {{- range $tag := $a.tags}}
+
+        docker buildx imagetools create \
+          -t {{ $ghcrns }}/{{ $dir }}:{{ $tag }} \
+          {{ $ghcrns }}/{{ $dir }}:{{ `${{ github.sha }}` }}
+        docker buildx imagetools create \
+          -t hairyhenderson/{{ $dir }}:{{ $tag }} \
+          hairyhenderson/{{ $dir }}:{{ `${{ github.sha }}` }}
+          {{- end}}
+        {{- end }}
+      if: github.repository == 'hairyhenderson/dockerfiles' && github.actor == 'hairyhenderson' && github.ref == 'refs/heads/main'
+    {{- end }}
+{{- end }}

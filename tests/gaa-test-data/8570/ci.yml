@@ -1,0 +1,123 @@
+name: CI
+
+on: [push, pull_request]
+
+env:
+  POETRY_VERSION: 1.1.6
+  POETRYINSTALLOPTS: -v
+  FLAKE8OPTS: -v
+  PYTESTOPTS: -v
+
+jobs:
+  flake8:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Setup Python
+        uses: actions/setup-python@v1
+        with:
+          python-version: 3.x
+
+      - name: Install poetry
+        uses: snok/install-poetry@v1.1.4
+        with:
+          version: ${{ env.POETRY_VERSION }}
+          virtualenvs-create: false
+
+      # Skip cache because we have few deps
+      - name: Install and run flake8
+        run: make -e flake8
+
+  tests:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.5', '3.6', '3.7', '3.8']
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Setup Python
+        uses: actions/setup-python@v1
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install poetry
+        uses: snok/install-poetry@v1.1.4
+        with:
+          version: ${{ env.POETRY_VERSION }}
+
+      - name: Cache poetry virtualenv
+        uses: actions/cache@v1
+        id: cache
+        with:
+          path: ~/.cache/pypoetry/virtualenvs
+          key: poetry-tests-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}
+
+      - name: Install test dependencies
+        run: make -e test_env
+        if: steps.cache.outputs.cache-hit != 'true'
+
+      - name: Run tests
+        run: make -e coverage
+
+      - name: Coveralls
+        continue-on-error: true
+        env:
+          COVERALLS_REPO_TOKEN: ${{ secrets.COVERALLS_REPO_TOKEN }}
+        run: |
+          pip install coveralls
+          coveralls
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Setup Python
+        uses: actions/setup-python@v1
+        with:
+          python-version: 3.x
+
+      - name: Install poetry
+        uses: snok/install-poetry@v1.1.4
+        with:
+          version: ${{ env.POETRY_VERSION }}
+          virtualenvs-create: false
+
+      - name: Build
+        run: poetry build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v1
+        with:
+          name: dist
+          path: dist
+
+  draft_release:
+    needs: [build, tests, flake8]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.event.ref, 'refs/tags/v')
+    steps:
+      - name: Fetch build artifacts
+        uses: actions/download-artifact@v1
+        with:
+          name: dist
+          path: dist
+
+      - name: Set release metadata
+        id: meta
+        shell: bash
+        run: |
+          echo "::set-output name=release_name::${GITHUB_REF##*/} ($(TZ=CET date -Idate))"
+
+      - name: Create release
+        uses: softprops/action-gh-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          name: ${{ steps.meta.outputs.release_name }}
+          body: TODO
+          files: dist/*
+          draft: true
+          prerelease: false

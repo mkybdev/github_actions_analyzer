@@ -1,0 +1,161 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  MIX_ENV: test
+
+jobs:
+  lint:
+    name: Lint
+
+    runs-on: ubuntu-20.04
+
+    strategy:
+      fail-fast: true
+
+    steps:
+      - name: Clone the repository
+        uses: actions/checkout@v4
+
+      - name: Install OTP and Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: "26.2"
+          elixir-version: "1.16"
+
+      - name: Cache dependencies
+        id: cache-deps
+        uses: actions/cache@v3
+        with:
+          path: |
+            deps
+            _build
+          key: |
+            ${{ runner.os }}-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-${{ hashFiles('**/mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-
+
+      - name: Install and compile dependencies
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        run: mix do deps.get + deps.compile
+
+      - name: Check formatting
+        run: mix format --check-formatted
+
+      - name: Check no unused dependencies
+        run: mix deps.unlock --check-unused
+        if: ${{ steps.cache-deps.outputs.cache-hit != 'true' }}
+
+      - name: Compile with --warnings-as-errors
+        run: mix compile --warnings-as-errors --force
+
+      - name: Cache Dialyzer's PLT
+        uses: actions/cache@v3
+        id: cache-plt
+        with:
+          path: priv/plts
+          key: |
+            ${{ runner.os }}-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-${{ hashFiles('**/mix.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-
+
+      # Create PLTs if no cache was found
+      - name: Create PLTs
+        if: steps.cache-plt.outputs.cache-hit != 'true'
+        run: mix dialyzer --plt
+
+      - name: Run Dialyzer
+        run: mix dialyzer --format github
+
+  test:
+    name: >-
+      Test (Elixir ${{ matrix.elixir }},
+      OTP ${{ matrix.otp }},
+      C* ${{ matrix.server_versions.cassandra }},
+      Scylla ${{ matrix.server_versions.scylla }} (coverage: ${{ matrix.coverage }})
+
+    runs-on: ubuntu-20.04
+
+    strategy:
+      fail-fast: false
+
+      matrix:
+        otp:
+          - "25.3"
+        elixir:
+          - "1.16"
+        server_versions:
+          - cassandra: "3"
+            scylla: "4.6.3"
+
+        include:
+          - otp: "26.2"
+            elixir: "1.16"
+            coverage: true
+            server_versions:
+              cassandra: "4.1"
+              scylla: "5.2"
+
+          # Oldest-supported Elixir and Erlang versions.
+          - otp: "25.3"
+            elixir: "1.15.4"
+            coverage: false
+            server_versions:
+              cassandra: "4.1"
+              scylla: "5.2"
+
+
+    env:
+      CASSANDRA_VERSION: ${{ matrix.server_versions.cassandra }}
+      SCYLLA_VERSION: ${{ matrix.server_versions.scylla }}
+      LOG_LEVEL: debug
+
+    steps:
+      - name: Clone the repository
+        uses: actions/checkout@v4
+
+      - name: Start Docker and wait for it to be up
+        run: |
+          docker-compose up --detach --build
+          ./test/docker/health-check-services.sh
+
+      - name: Install OTP and Elixir
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ matrix.otp }}
+          elixir-version: ${{ matrix.elixir }}
+
+      - name: Cache dependencies
+        id: cache-deps
+        uses: actions/cache@v3
+        with:
+          path: |
+            deps
+            _build
+          key: |
+            ${{ runner.os }}-mix-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-${{ hashFiles('**/mix.lock') }}
+          restore-keys:
+            ${{ runner.os }}-mix-otp${{ matrix.otp }}-elixir${{ matrix.elixir }}-
+
+      - name: Install and compile dependencies
+        if: steps.cache-deps.outputs.cache-hit != 'true'
+        run: mix do deps.get --only test + deps.compile
+
+      # TODO: eventually figure out why we can't run encryption tests on CI.
+      - name: Run tests for Cassandra and Scylla (with coverage)
+        if: ${{ matrix.coverage }}
+        run: mix test.ci_with_coverage --exclude encryption --exclude toxiproxy
+
+      - name: Run tests for Cassandra and Scylla (without coverage)
+        if: ${{ !matrix.coverage }}
+        run: mix test.all --exclude encryption --exclude toxiproxy
+
+      - name: Dump Docker logs on failure
+        uses: jwalton/gh-docker-logs@v1
+        if: failure()

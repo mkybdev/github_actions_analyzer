@@ -1,0 +1,69 @@
+name: Regression
+
+on:
+  push:
+    branches-ignore:
+      - 'main'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  regression:
+    # Check if the event is not triggered by a fork, this is stupid but its github
+    if: github.ref != 'refs/heads/main' && github.repository == 'abaplint/abaplint'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+    - uses: actions/setup-node@v4
+
+    - name: compile
+      run: |
+        cp .github/regression/run.js ../../run.js
+        npm run install && npm run link-local && npm test
+        mkdir ../../abaplint_after
+        cp packages/cli/build/cli.js ../../abaplint_after/
+        rm -rf packages/cli/build/ && rm -rf packages/core/build/
+        git checkout -f main
+        git reset --hard
+        git status
+        npm run install && npm run link-local && npm test
+        mkdir ../../abaplint_before
+        cp packages/cli/build/cli.js ../../abaplint_before/
+
+    - name: run
+      run: |
+        cd .. && cd ..
+        ls -salh
+        node ./run.js
+
+    - uses: jwalton/gh-find-current-pr@v1
+      id: findPr
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+    - run: echo ${{ steps.findPr.outputs.pr }}
+
+    - name: Find Comment
+      if: steps.findPr.outputs.pr != ''
+      uses: peter-evans/find-comment@v3
+      id: fc
+      with:
+        repository: 'abaplint/abaplint'
+        issue-number: '${{steps.findPr.outputs.pr}}'
+        body-includes: Regression test results
+
+    - run: echo ${{ steps.fc.outputs.comment-id }}
+
+    - name: Create comment
+      if: steps.findPr.outputs.pr != ''
+      uses: peter-evans/create-or-update-comment@v4
+      id: create-comment
+      with:
+        issue-number: '${{steps.findPr.outputs.pr}}'
+        edit-mode: replace
+        comment-id: '${{steps.fc.outputs.comment-id}}'
+        body-path: ../../comment-body.txt

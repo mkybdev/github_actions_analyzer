@@ -1,0 +1,48 @@
+name: "Run jPOS Tests"
+on: [push, pull_request]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        java: [ 8, 11 ]
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up JDK ${{ matrix.java }}
+      uses: actions/setup-java@v3
+      with:
+        distribution: 'corretto'
+        java-version: ${{ matrix.java }}
+        cache: 'gradle'
+    - name: Cache Gradle packages
+      uses: actions/cache@v3
+      with:
+        path: ~/.gradle/caches
+        key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle') }}
+        restore-keys: ${{ runner.os }}-gradle
+    - name: Assemble
+      run: ./gradlew jpos:assemble --info
+      env:
+        TERM: dumb
+    - name: Check
+      run: ./gradlew jpos:check --info
+      env:
+        TERM: dumb
+    - name: Upload test results
+      if: success() || failure()
+      uses: actions/upload-artifact@v3
+      with:
+        name: test-results
+        path: jpos/build/reports/tests/*
+    - name: Dependency Check Analyze
+      run: ./gradlew jpos:dependencyCheckAnalyze --info
+      env:
+        TERM: dumb
+    - name: Dependency Check Analyze
+      run: ./gradlew jpos:dependencyCheckAnalyze --info
+      env:
+        TERM: dumb
+

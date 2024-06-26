@@ -1,0 +1,33 @@
+name: PHP Composer
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Validate composer.json and composer.lock
+      run: composer validate
+
+    - name: Checking JavaScript dependencies
+      run: npm audit
+
+    - name: Installing PHP dependencies
+      run: composer install --prefer-dist --no-progress --no-suggest
+
+    - name: Installing JavaScript dependencies
+      run: npm install
+
+    - name: Running quality checks
+      run: vendor/bin/phing checks
+
+    - name: Running test suite
+      run: vendor/bin/phpunit

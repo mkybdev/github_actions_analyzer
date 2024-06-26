@@ -1,0 +1,77 @@
+---
+name: Main
+
+on:
+  push:
+    branches:
+      - master
+    paths-ignore:
+      - "*.md"
+
+  pull_request:
+    branches:
+      - master
+    paths-ignore:
+      - "*.md"
+  
+  workflow_dispatch:
+
+env:
+  BUILD_CONFIGURATION: Release
+
+jobs:
+  build:
+    name: Build & Test
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Restore
+        run: dotnet restore
+
+      - name: Build
+        run: dotnet build --configuration ${{ env.BUILD_CONFIGURATION }} --no-restore
+
+      - name: Test
+        run: dotnet test --configuration ${{ env.BUILD_CONFIGURATION }} --no-build
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lib
+          path: "**/*.nupkg"
+
+  deploy:
+    name: Deploy
+
+    if: ${{ github.ref == 'refs/heads/master' }}
+
+    runs-on: ubuntu-latest
+
+    permissions:
+      packages: write
+      contents: read
+      issues: read
+      checks: write
+      pull-requests: write
+
+
+    needs:
+      - build
+
+    steps:
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: lib
+
+      - name: Push package to GitHub packages
+        run: dotnet nuget push "**/*.nupkg" --source "https://nuget.pkg.github.com/$GITHUB_REPOSITORY_OWNER/index.json" --api-key ${{ secrets.GITHUB_TOKEN }} --skip-duplicate

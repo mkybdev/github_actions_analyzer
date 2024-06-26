@@ -1,0 +1,139 @@
+name: quick workflow
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+      - name: deps
+        run: |
+          sudo apt-get update
+          sudo apt-get -y --no-install-recommends install \
+               build-essential \
+               meson ninja-build \
+               automake \
+               pkg-config \
+               bash bats \
+               libpoco-dev \
+               libboost-dev \
+               libdmalloc-dev
+      - name: fuse3
+        run: |
+          mkdir /tmp/fuse3 ; cd /tmp/fuse3
+          git clone --depth 1 https://github.com/libfuse/libfuse.git .
+          mkdir build ; cd build
+          meson ..
+          ninja
+          sudo ninja install
+      - name: bootstrap
+        run: sh bootstrap
+      - name: configure
+        run: |
+          export CC=clang
+          export CXX=clang++
+          sh configure --enable-clang-flags || \
+              { tail -n 500 config.log; false; }
+      - name: clean
+        run: make clean
+      - name: make
+        run: make -j
+      - name: prepare
+        run: |
+          set -x
+          sudo apt-get install -y \
+               clamav-daemon \
+               clamav-testfiles
+          sudo systemctl stop clamav-freshclam
+          sudo freshclam
+          sudo systemctl restart clamav-freshclam
+          sudo systemctl restart clamav-daemon
+          # wait for clamd to initialize
+          sleep 1m
+      - name: mount
+        run: |
+          set -x
+          sudo mkdir -p /clamfs/tmp
+          sudo ./src/clamfs ./doc/clamfs.xml
+      - name: empty
+        run: |
+          set -x
+          cd /clamfs/tmp
+          touch empty.file
+          cat empty.file
+      - name: string
+        run: |
+          set -x
+          cd /clamfs/tmp
+          echo 'Hello World!' > string.txt
+          cat string.txt
+      - name: copy
+        run: |
+          set -x
+          cd /clamfs/tmp
+          cp -v string.txt string-copy.txt
+          cat string-copy.txt
+      - name: eicar
+        run: |
+          set -x
+          cd /clamfs/tmp
+          echo 'X5O!P%@AP[4\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*' > eicar.com
+          hexdump -C eicar.com && exit 1
+          sudo grep -e 'Eicar-Test-Signature' \
+                    -e 'Eicar-Signature' \
+                    -e 'Clamav.Test.File-7' /var/log/syslog || \
+              { sudo tail -n 50 /var/log/syslog; false; }
+      - name: testfiles
+        run: |
+          set -x
+          mkdir /clamfs/tmp/testfiles
+          cd /clamfs/tmp/testfiles
+          cp -v /usr/share/clamav-testfiles/* .
+          ls | grep -e clam-v2.rar -e clam-v3.rar -e clam_cache_emax.tgz | xargs rm -fv
+          test -z "$(file * | grep -v 'no read permission')"
+      - name: fname
+        run: |
+          set -x
+          sudo fusermount3 -u /clamfs/tmp
+          sed -i 's/mode=".*"/mode="fname"/g' ./doc/clamfs.xml
+          sudo ./src/clamfs ./doc/clamfs.xml
+          cd /clamfs/tmp
+          cat string.txt
+          hexdump -C eicar.com && exit 1
+          sudo grep -e 'Eicar-Test-Signature' \
+                    -e 'Eicar-Signature' \
+                    -e 'Clamav.Test.File-7' /var/log/syslog || \
+              { sudo tail -n 50 /var/log/syslog; false; }
+      - name: stream
+        run: |
+          set -x
+          sudo fusermount3 -u /clamfs/tmp
+          sed -i 's/mode=".*"/mode="stream"/g' ./doc/clamfs.xml
+          sudo ./src/clamfs ./doc/clamfs.xml
+          cd /clamfs/tmp
+          cat string.txt
+          hexdump -C eicar.com && exit 1
+          sudo grep -e 'Eicar-Test-Signature' \
+                    -e 'Eicar-Signature' \
+                    -e 'Clamav.Test.File-7' /var/log/syslog || \
+              { sudo tail -n 50 /var/log/syslog; false; }
+      - name: umount
+        run: |
+          set -x
+          sudo umount /clamfs/tmp
+      - name: bats
+        run: |
+          cd tests
+          ./runtests.bash

@@ -1,0 +1,28 @@
+name: Swift
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+
+    runs-on: macos-latest
+
+    steps:
+    - name: Build
+      env:
+        TEST: ${{ secrets.MY_OTHER_SECRET }}
+        MOAR_TEST: ${{ secrets.YOUR_SECRET_NAME }}
+      run: |
+        echo "Do we have a secret?"
+        echo "1) $TEST"
+        echo "2) $MOAR_TEST"
+        if [[ $TEST == $MOAR_TEST ]]; then
+          echo "They are equal"
+        else
+          echo "They're NOT equal"
+        fi

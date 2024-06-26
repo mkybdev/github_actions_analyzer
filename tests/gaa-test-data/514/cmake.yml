@@ -1,0 +1,125 @@
+name: CMake
+
+on:
+  push:
+    branches: ["master"]
+  pull_request:
+    branches: ["master"]
+
+env:
+  # Customize the CMake build type here (Release, Debug, RelWithDebInfo, etc.)
+  BUILD_TYPE: Release
+
+jobs:
+  macos_Python:
+    runs-on: macOS-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install tox
+        run: pip3 install tox
+
+      - name: Python initial test
+        working-directory: ${{github.workspace}}
+        run: tox run
+
+  # windows_Python:
+  #   runs-on: windows-latest
+  #   steps:
+  #     - uses: actions/checkout@v3
+
+  #     - name: Install tox
+  #       run: pip3 install tox
+
+  #     - name: Python initial test
+  #       working-directory: ${{github.workspace}}
+  #       run: tox run
+
+  ubuntu_Python_wo_Boost:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Python NumPy and Pybind11
+        run: sudo pip3 install tox
+
+      - name: Python initial test
+        working-directory: ${{github.workspace}}
+        run: tox run
+
+  ubuntu_Python_Boost:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Python NumPy and Pybind11
+        run: sudo pip3 install tox
+
+      - name: install Boost (to use multiprecision)
+        run: sudo apt install libboost-all-dev
+
+      - name: Python initial test
+        working-directory: ${{github.workspace}}
+        run: tox run
+
+  isBuilding_wo_GTest_Boost:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install Python NumPy and Pybind11
+        run: sudo apt install python3-pybind11
+
+      - name: Configure CMake
+        run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
+
+      - name: Build
+        run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}}
+
+      - name: Test
+        working-directory: ${{github.workspace}}/build
+        run: ctest -C ${{env.BUILD_TYPE}} --output-on-failure
+
+      - name: isBuilding without cmake
+        working-directory: ${{github.workspace}}/examples
+        run: ./go-cc-examples.sh
+
+  ctest_wo_Boost:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Install deps
+        run: sudo apt install python3-pybind11 libgtest-dev
+
+      - name: Configure CMake
+        run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
+
+      - name: Build
+        run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}}
+
+      - name: Test
+        working-directory: ${{github.workspace}}/build
+        run: ctest -C ${{env.BUILD_TYPE}} --output-on-failure
+
+  ctest_full:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      ##################################################################
+      # Do just the same but now with Boost multiprecision
+      ##################################################################
+      - name: install Boost (to use multiprecision)
+        run: sudo apt install python3-pybind11 libgtest-dev libboost-all-dev
+
+      - name: Configure CMake
+        run: cmake -B ${{github.workspace}}/build -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}}
+
+      - name: Build
+        run: cmake --build ${{github.workspace}}/build --config ${{env.BUILD_TYPE}}
+
+      - name: Test
+        working-directory: ${{github.workspace}}/build
+        run: ctest -C ${{env.BUILD_TYPE}} --output-on-failure

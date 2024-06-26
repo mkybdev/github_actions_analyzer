@@ -1,0 +1,64 @@
+name: Maven Build and Deployment
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+    name: Build and Verify
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Check out Git repository
+      uses: actions/checkout@v3
+
+    - name: Set up Java and Maven
+      uses: actions/setup-java@v3
+      with:
+        distribution: zulu
+        java-version: 18
+        cache: maven
+
+    - name: Build with Maven
+      run: mvn -B verify
+
+    - name: Upload integration test log and settings on failure
+      uses: actions/upload-artifact@v3
+      if: failure()
+      with:
+        name: integration-test-log
+        path: |
+          test/target/it/acegi-internal/build.log
+          /home/runner/.m2/settings.xml
+
+  deploy:
+    name: Deploy to OSSRH
+    needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Check out Git repository
+      uses: actions/checkout@v3
+
+    - name: Set up Java and Maven
+      uses: actions/setup-java@v3
+      with:
+        distribution: zulu
+        java-version: 11
+        cache: maven
+        server-id: ossrh
+        server-username: MAVEN_USERNAME
+        server-password: MAVEN_CENTRAL_TOKEN
+        gpg-private-key: ${{ secrets.gpg_private_key }}
+        gpg-passphrase: MAVEN_GPG_PASSPHRASE
+
+    - name: Publish Maven package
+      run: mvn -Possrh-deploy -B deploy
+      env:
+        MAVEN_GPG_PASSPHRASE: ${{ secrets.gpg_passphrase }}
+        MAVEN_USERNAME: ${{ secrets.nexus_username }}
+        MAVEN_CENTRAL_TOKEN: ${{ secrets.nexus_password }}

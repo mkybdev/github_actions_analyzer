@@ -1,0 +1,51 @@
+name: Test cucumber-core
+
+on:
+  push:
+    branches:
+      - main
+      - renovate/**
+  pull_request:
+    branches:
+      - main
+  workflow_call:
+  schedule:
+    - cron: "0 5 * * *"
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        ruby: ['2.7', '3.0', '3.1', '3.2', '3.3']
+        bundler: ['2.4.19']
+        rubygems: ['latest']
+        include:
+          - os: ubuntu-latest
+            ruby: '2.5'
+            bundler: '2.3.17'
+            rubygems: '3.0.8'
+          - os: ubuntu-latest
+            ruby: '2.6'
+            bundler: '2.4.19'
+            rubygems: '3.2.3'
+          - os: ubuntu-latest
+            ruby: jruby
+          - os: macos-latest
+            ruby: '3.3'
+          - os: windows-latest
+            ruby: '3.3'
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler: ${{ matrix.bundler }}
+          rubygems: ${{ matrix.rubygems }}
+          bundler-cache: true
+      - name: Run tests
+        run: bundle exec rake
+        shell: bash

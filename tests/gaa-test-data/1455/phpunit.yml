@@ -1,0 +1,30 @@
+name: PhpUnit tests
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        submodules: 'recursive'
+
+    - name: Install PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: '8.1'
+
+    - name: Install dependencies
+      run: |
+        composer install --prefer-dist --no-progress --no-suggest;
+        composer dump-autoload;
+
+    - name: Run tests
+      run: USE_TOOLS_PROTOC=true ./vendor/bin/phpunit --bootstrap tests/Unit/autoload.php tests/Unit

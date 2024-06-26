@@ -1,0 +1,51 @@
+---
+name: Tests
+
+"on":
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "0 7 * * 0"
+
+defaults:
+  run:
+    working-directory: "nextcloud.ansible-collection-nextcloud-admin"
+
+jobs:
+  molecule:
+    name: Molecule
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        distro: [debian12, debian11, ubuntu2204, ubuntu2004]
+        nc_version: [latest, nc26, nc25]
+
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          path: "nextcloud.ansible-collection-nextcloud-admin"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Upgrade pip
+        run: |
+          python3 -m pip install --constraint=.github/workflows/constraints.txt pip
+          python3 -m pip --version
+
+      - name: Install test dependencies
+        run: |
+          python3 -m pip install --constraint=.github/workflows/constraints.txt ansible 'molecule-plugins[docker]' docker netaddr
+
+      - name: Run Molecule tests
+        run: molecule test
+        env:
+          PY_COLORS: "1"
+          ANSIBLE_FORCE_COLOR: "1"
+          MOLECULE_DISTRO: ${{ matrix.distro }}
+          MOLECULE_NC: ${{ matrix.nc_version }}

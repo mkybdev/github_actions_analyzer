@@ -1,0 +1,145 @@
+name: frontend
+on:
+  push:
+    paths:
+      - "frontend/**"
+      - "**.json"
+      - ".github/workflows/frontend.yml"
+defaults:
+  run:
+    working-directory: frontend
+env:
+  CACHE_VERSION: 2
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    env:
+      VERSION_HASH: "_version_"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: styfle/cancel-workflow-action@0.11.0
+        with:
+          access_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-node@v3
+        with:
+          node-version-file: "frontend/package.json"
+      - uses: actions/cache@v3
+        id: cache
+        with:
+          path: ~/work/lekcije/lekcije/frontend/node_modules
+          key: ${{ runner.os }}-${{ hashFiles('**/package.json') }}-${{ env.CACHE_VERSION }}
+          restore-keys: |
+            ${{ runner.os }}-node_modules-
+      - name: Install npm modules
+        run: |
+          if [ ! -e "./node_modules" ]; then
+            set -eu
+            npm install --legacy-peer-deps
+          fi
+      - name: Run tests
+        run: |
+          npm test -- --coverage
+      - name: Upload coverage to codecov
+        uses: codecov/codecov-action@v3.1.4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          fail_ci_if_error: false
+          flags: frontend
+
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    env:
+      VERSION_HASH: "_version_"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: styfle/cancel-workflow-action@0.11.0
+        with:
+          access_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-node@v3
+        with:
+          node-version-file: "frontend/package.json"
+      - uses: actions/cache@v3
+        id: cache
+        with:
+          path: ~/work/lekcije/lekcije/frontend/node_modules
+          key: ${{ runner.os }}-${{ hashFiles('**/package.json') }}-${{ env.CACHE_VERSION }}
+          restore-keys: |
+            ${{ runner.os }}-node_modules-
+      - name: Install npm modules
+        run: |
+          if [ ! -e "./node_modules" ]; then
+            set -eu
+            npm install --legacy-peer-deps
+          fi
+      - name: Run build
+        run: |
+          npm run build
+      - name: Run lint
+        run: |
+          export NODE_OPTIONS="--max_old_space_size=4096"
+          npm run lint
+
+  deploy:
+    name: deploy
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'ref/heads/public-')
+    needs:
+      - lint
+      - test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: styfle/cancel-workflow-action@0.11.0
+        with:
+          access_token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-node@v3
+        with:
+          node-version-file: "frontend/package.json"
+      - uses: actions/cache@v3
+        id: cache
+        with:
+          path: ~/work/lekcije/lekcije/frontend/node_modules
+          key: ${{ runner.os }}-${{ hashFiles('**/package.json') }}-${{ env.CACHE_VERSION }}
+          restore-keys: |
+            ${{ runner.os }}-node_modules-
+      - name: Install npm modules
+        run: |
+          if [ ! -e "./node_modules" ]; then
+            set -eu
+            npm install --legacy-peer-deps
+          fi
+      - name: Minify
+        run: |
+          rm -rf static
+          make minify-static
+      - uses: "google-github-actions/auth@v1"
+        with:
+          credentials_json: '${{ secrets.GCP_SERVICE_ACCOUNT_KEY }}'
+      - uses: google-github-actions/setup-gcloud@v1
+      - name: Deploy to GCS
+        run: |
+          HASH=$(make print-version-hash)
+          gsutil -h "Cache-Control: public,max-age=2592000" -m -q rsync -d -r static/$HASH gs://asset.lekcije.com/static/$HASH
+      - name: Ensure to enable CORS
+        run: |
+          gsutil cors set cors-asset.lekcije.com.json gs://asset.lekcije.com
+      - name: Install heroku command
+        run: |
+          ../ci/install-heroku-cli.sh
+      - name: Set VERSION_HASH on heroku
+        run: |
+          HASH=$(make print-version-hash)
+          /opt/heroku/bin/heroku config:set VERSION_HASH=$HASH -a lekcije
+        env:
+          HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
+      - name: Write VERSION_HASH.txt
+        run: |
+          HASH=$(make print-version-hash)
+          echo $HASH > ../VERSION_HASH.txt
+          git status
+      - name: Commit VERSION_HASH.txt
+        uses: stefanzweifel/git-auto-commit-action@v4
+        with:
+          commit_message: "Update VERSION_HASH.txt"
+          file_pattern: "VERSION_HASH.txt"

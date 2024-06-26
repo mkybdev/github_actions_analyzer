@@ -1,0 +1,37 @@
+name: Bazel build and test
+on:
+  pull_request:
+    branches:
+      - main
+jobs:
+  bazel:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Setup bazel
+      uses: jwlawson/actions-setup-bazel@v1
+      with:
+        bazel-version: '3.2.0'
+        
+    - name: Checkout
+      uses: actions/checkout@v1
+      with:
+        lfs: true
+      
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.8'
+        architecture: 'x64' 
+      
+    - name: Install harfbuzz
+      run: sudo apt-get install libharfbuzz-bin
+      
+    - name: Bazel build
+      run: bazel build ...
+      
+    - name: Bazel test
+      run: bazel test ...
+
+    - name: Bazel test (in series, with logs)
+      if: ${{ failure() }}
+      run: bazel test ... --test_output=streamed

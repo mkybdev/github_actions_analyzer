@@ -1,0 +1,77 @@
+name: jnipp
+on: [push]
+jobs:
+  windows:
+    name: windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        name: Checkout project
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "8"
+      - name: Add msbuild to PATH
+        uses: microsoft/setup-msbuild@v2
+        with:
+          vs-version: 16.5
+      - name: Build
+        run: msbuild jnipp.sln /p:Platform=X64 /m
+      - name: Test
+        run: .\x64\Debug\tests.exe
+
+      - name: CMake Configure
+        run: cmake -A x64 -S . -B build
+      - name: CMake Build
+        run: cmake --build build --config Debug
+      - name: CMake Test
+        run: ctest -V -C Debug --output-on-failure
+        working-directory: build
+
+  macos:
+    name: macos
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        name: Checkout project
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "8"
+      - name: Build
+        run: make
+      - name: Test
+        run: ./test
+
+      - name: CMake Configure
+        run: cmake -G "Unix Makefiles" -S . -B build
+      - name: CMake Build
+        run: make
+        working-directory: build
+      - name: CMake Test
+        run: ctest -V --output-on-failure
+        working-directory: build
+
+  ubuntu:
+    name: ubuntu
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        name: Checkout project
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "8"
+      - name: Build
+        run: make
+      - name: Test
+        run: ./test
+
+      - name: CMake Configure
+        run: cmake -G "Unix Makefiles" -S . -B build
+      - name: CMake Build
+        run: make
+        working-directory: build
+      - name: CMake Test
+        run: ctest -V --output-on-failure
+        working-directory: build

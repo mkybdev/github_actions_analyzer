@@ -1,0 +1,100 @@
+name: CI
+
+on:
+  push:
+    branches: ['master']
+  pull_request:
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'pull_request' }}
+    steps:
+    - uses: actions/checkout@v1
+
+    - uses: actions/setup-node@v1
+      with:
+        version: 18.14.2
+
+    - uses: actions/cache@v1
+      name: Cache node_modules
+      id: cache-node-modules
+      with:
+        path: node_modules
+        key: ${{ runner.os }}-yarn-${{ hashFiles('**/yarn.lock') }}-node_modules
+
+    - name: Yarn
+      if: steps.cache-node-modules.outputs.cache-hit != 'true'
+      run: yarn install
+
+    - name: Build and Lint
+      run: yarn typecheck
+  
+  build:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      
+      - name: Login to GHCR
+        uses: docker/login-action@f054a8b539a109f9f41c372932f1ae047eff08c9
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@dbef88086f6cef02e264edb7dbf63250c17cef6c
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@4a13e500e55cf31b7a5d59a38ab2040ab0f42f56
+        with:
+          context: .
+          file: Production.dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: COMMIT_SHA=${{ github.sha }}
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy to Charon
+    needs: build
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
+    environment: aethebot
+    steps:
+      - name: Setup Tailscale
+        id: tailscale
+        uses: tailscale/github-action@7a0b30ed3517c2244d1330e39467b95f067a33bd
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:aethebot-ci
+      - name: Deploy via SSH
+        id: ssh_deploy
+        env:
+          SSH_KEY: ${{ secrets.CHARON_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo 1
+          MACHINE_IP="$(tailscale ip -4 charon)"
+          echo 2
+          for i in $(seq 1 5); do ssh-keyscan -v -t ed25519 "$MACHINE_IP" >> ~/.ssh/known_hosts && s=0 && break || s=$? && sleep 5; done; (exit $s)
+          echo 3
+          printf "%s" "$SSH_KEY" > ~/.ssh/key
+          echo 4
+          chmod 600 ~/.ssh/key
+          echo 5
+          ssh -i ~/.ssh/key tyrone@$MACHINE_IP /home/tyrone/aethebot/restart.sh
+          echo 6

@@ -1,0 +1,156 @@
+name: Publish GitHub pages
+
+# read-write repo token
+# access to secrets
+# based on https://securitylab.github.com/research/github-actions-preventing-pwn-requests/
+on:
+  workflow_run:
+    workflows: ["Build PR"]
+    types:
+      - completed
+
+# avoid GitHub Pages deploy to overwrite another in progress job
+concurrency:
+  group: dev_environment
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    if: >
+      ${{ github.event.workflow_run.event == 'pull_request' }}
+    # github.event.workflow_run.conclusion == 'success'
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          ref: 'gh-pages'
+          path: 'gh-pages'
+      - name: 'Download artifact'
+        uses: actions/github-script@v3.1.0
+        with:
+          script: |
+            var artifacts = await github.actions.listWorkflowRunArtifacts({
+               owner: context.repo.owner,
+               repo: context.repo.repo,
+               run_id: ${{github.event.workflow_run.id }},
+            });
+            var matchArtifact = artifacts.data.artifacts.filter((artifact) => {
+              return artifact.name == "website-output"
+            })[0];
+            var download = await github.actions.downloadArtifact({
+               owner: context.repo.owner,
+               repo: context.repo.repo,
+               artifact_id: matchArtifact.id,
+               archive_format: 'zip',
+            });
+            var fs = require('fs');
+            fs.writeFileSync('${{github.workspace}}/website-output.zip', Buffer.from(download.data));
+      - name: Extract built content from artifact
+        run: |
+          mkdir -p /tmp/website-output
+          unzip website-output.zip -d /tmp/website-output
+      - name: Get PR number from artifact
+        id: get_ticket
+        run: |
+          echo "::set-output name=NR::$(< /tmp/website-output/NR)"
+          echo "::set-output name=REPO::$(< /tmp/website-output/REPO)"
+      - name: Get PR ref
+        id: get_pull_request_ref
+        if: steps.get_ticket.outputs.NR  != 'main'
+        uses: octokit/request-action@v2.x
+        with:
+          route: GET /repos/:repository/pulls/:issue_id
+          repository: ${{ github.repository }}
+          issue_id: ${{ steps.get_ticket.outputs.NR }}
+        env:
+          GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+      - name: Create Deployment
+        id: create_deployment
+        if: steps.get_ticket.outputs.NR != 'main' && steps.get_ticket.outputs.REPO == github.repository
+        uses: octokit/request-action@v2.x
+        with:
+          route: POST /repos/:repository/deployments
+          repository: ${{ steps.get_ticket.outputs.REPO }}
+          ref: ${{ fromJson(steps.get_pull_request_ref.outputs.data).head.ref }}
+          environment: dev
+          auto_merge: false
+        env:
+          GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+      - name: Move built content to gh-pages
+        env:
+          NR: ${{ steps.get_ticket.outputs.NR }}
+        run: |
+          echo "Issue Number: $NR"
+          [ -z "$NR" ] && exit 1
+          rm -rf gh-pages/$NR/
+          mkdir -p gh-pages/$NR/
+          cp -rfv /tmp/website-output/* gh-pages/$NR/
+      - name: Start Deployment (in progress)
+        id: start_deployment
+        if: steps.get_ticket.outputs.NR != 'main' && steps.get_ticket.outputs.REPO == github.repository
+        uses: octokit/request-action@v2.x
+        with:
+          route: POST /repos/:repository/deployments/:deployment/statuses
+          repository: ${{ steps.get_ticket.outputs.REPO }}
+          deployment: ${{ fromJson(steps.create_deployment.outputs.data).id }}
+          environment: dev
+          environment_url: http://pyar.github.io/PyZombis/${{ steps.get_ticket.outputs.NR }}
+          log_url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          state: in_progress
+          mediaType: '{"previews": ["flash", "ant-man"]}'
+        env:
+          GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+      - name: Publish generated content to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+            publish_dir: gh-pages
+            publish_branch: gh-pages
+            github_token: ${{ secrets.GITHUB_TOKEN }}
+      - name: 'Comment on PR'
+        if: github.ref != 'main'
+        uses: actions/github-script@v3
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            var fs = require('fs');
+            var issue_number = Number(fs.readFileSync('/tmp/website-output/NR'));
+            // if this is not a PR (merge to main build), do not comment:
+            if (issue_number > 0) {
+              await github.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue_number,
+                body: `Published to http://pyar.github.io/PyZombis/${issue_number}/index.html`
+              });
+            }
+      - name: Deployment success
+        id: successful_deployment
+        if: steps.get_ticket.outputs.NR != 'main' && steps.get_ticket.outputs.REPO == github.repository
+        uses: octokit/request-action@v2.x
+        with:
+          route: POST /repos/:repository/deployments/:deployment/statuses
+          repository: ${{ steps.get_ticket.outputs.REPO }}
+          deployment: ${{ fromJson(steps.create_deployment.outputs.data).id }}
+          environment: dev
+          environment_url: http://pyar.github.io/PyZombis/${{ steps.get_ticket.outputs.NR }}
+          log_url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          mediaType: '{"previews": ["ant-man"]}'
+          state: success
+        env:
+          GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: Deployment failure
+        id: failed_deployment
+        if: failure() && steps.get_ticket.outputs.NR != 'main' && steps.get_ticket.outputs.REPO == github.repository
+        uses: octokit/request-action@v2.x
+        with:
+          route: POST /repos/:repository/deployments/:deployment/statuses
+          repository: ${{ steps.get_ticket.outputs.REPO }}
+          deployment: ${{ fromJson(steps.create_deployment.outputs.data).id }}
+          environment: dev
+          environment_url: http://pyar.github.io/PyZombis/${{ steps.get_ticket.outputs.NR }}
+          log_url: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          mediaType: '{"previews": ["ant-man"]}'
+          state: failure
+        env:
+          GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"

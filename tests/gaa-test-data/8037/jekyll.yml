@@ -1,0 +1,38 @@
+name: Jekyll
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      JEKYLL_GITHUB_TOKEN: '${{ secrets.GH_TOKEN }}'
+    name: Deploy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+      - name: Build
+        run: make build
+      - name: Check integrity
+        run: |
+          nohup make serve LIVE_RELOAD=0 &
+          sleep 5 && make wget
+      - name: Set up ssh-agent
+        uses: webfactory/ssh-agent@v0.8.0
+        with:
+          ssh-private-key: '${{ secrets.REMOTE_SSH_KEY }}'
+      - name: Deploy
+        run: make deploy
+        env:
+          REMOTE_USER: '${{ secrets.REMOTE_USER }}'
+          REMOTE_HOST: '${{ secrets.REMOTE_HOST }}'
+          REMOTE_PORT: '${{ secrets.REMOTE_PORT }}'
+          REMOTE_DIR: '${{ secrets.REMOTE_DIR }}'
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/gh-pages'

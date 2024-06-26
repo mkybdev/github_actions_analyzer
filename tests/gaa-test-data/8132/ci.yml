@@ -1,0 +1,88 @@
+name: Continuous Integration (CI)
+
+on:
+  push:
+  
+  pull_request:
+    branches: [ develop ]
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        variant: [esp8266, host, rp2040]
+        toolchain: [gcc]
+        include:
+          - variant: esp8266
+            arch: Esp8266
+          - variant: host
+            arch: Host
+          - os: ubuntu-latest
+            variant: host
+            arch: Host
+            toolchain: clang
+          - os: ubuntu-latest
+            variant: host
+            arch: Host
+            toolchain: gcc64
+          - variant: rp2040
+            arch: Rp2040
+
+    concurrency: 
+      group: ${{ github.workflow }}-${{ github.ref }}-${{ toJson(matrix) }}
+      cancel-in-progress: true
+
+    runs-on: ${{ matrix.os }}
+
+    env:
+      SMING_ARCH: ${{ matrix.arch }}
+      SMING_SOC: ${{ matrix.variant }}
+      CLANG_BUILD: ${{ matrix.toolchain == 'clang' && '15' || '0' }}
+      BUILD64: ${{ matrix.toolchain == 'gcc64' && 1 || 0 }}
+
+    steps:
+    - name: Fix autocrlf setting
+      run: |
+        git config --global --add core.autocrlf input
+
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Configure environment
+      shell: pwsh
+      run: |
+        "CI_BUILD_DIR=" + (Resolve-Path ".").path >> $env:GITHUB_ENV
+        "SMING_HOME=" + (Resolve-Path "Sming").path >> $env:GITHUB_ENV
+
+    - name: Install build tools for Ubuntu
+      if: ${{ matrix.os == 'ubuntu-latest' }}
+      run: |
+        Tools/ci/install.sh
+
+    - name: Install build tools for Windows   
+      if: ${{ matrix.os == 'windows-latest' }}
+      run: |
+         . Tools/ci/setenv.ps1
+         Tools/ci/install.cmd
+
+    - name: Build and test for ${{matrix.variant}} on Ubuntu
+      env:
+        CLANG_FORMAT: clang-format-8
+      if: ${{ matrix.os == 'ubuntu-latest' }}
+      run: |
+        source $SMING_HOME/../Tools/export.sh
+        $CLANG_FORMAT --version
+        Tools/ci/build.sh
+
+    - name: Build and test for ${{matrix.variant}} on Windows
+      if: ${{ matrix.os == 'windows-latest' }}
+      run: |
+        . Tools/ci/setenv.ps1
+        Tools/ci/build.cmd

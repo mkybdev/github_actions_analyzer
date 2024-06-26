@@ -1,0 +1,63 @@
+name: Publish to DockerHub 
+
+on:
+    push:
+        branches:
+        - 'master'
+
+jobs:
+    build:
+        runs-on: ubuntu-latest
+        steps:
+        - name: Checkout
+          uses: actions/checkout@v2
+        - name: Set up Docker Buildx
+          uses: docker/setup-buildx-action@v1
+        - name: Login to DockerHub
+          uses: docker/login-action@v1
+          with:
+              username: ${{ secrets.DOCKER_USERNAME }}
+              password: ${{ secrets.DOCKER_PASSWORD }}
+        - name: Build & Push PyTorch CUDA 10 image
+          uses: docker/build-push-action@v2
+          with:
+              file: docker/Dockerfile.pytorch-cuda10 
+              push: true
+              tags: meadml/mead2-pytorch-gpu:latest
+        - name: Build & Push PyTorch CUDA 11 image
+          uses: docker/build-push-action@v2
+          with:
+              file: docker/Dockerfile.pytorch-cuda11
+              push: true
+              tags: meadml/mead2-pytorch-cuda11:latest
+        - name: Build & Push PyTorch CUDA 11.1 image
+          uses: docker/build-push-action@v2
+          with:
+              file: docker/Dockerfile.pytorch-cuda111
+              push: true
+              tags: meadml/mead2-pytorch-cuda111:latest
+        - name: Build & Push PyTorch CUDA 11 ext image
+          uses: docker/build-push-action@v2
+          with:
+              file: docker/Dockerfile.pytorch-cuda11x
+              push: true
+              tags: meadml/mead2-pytorch-cuda11x:latest
+        - name: Build & Push PyTorch CUDA 11.1 ext image
+          uses: docker/build-push-action@v2
+          with:
+              file: docker/Dockerfile.pytorch-cuda111x
+              push: true
+              tags: meadml/mead2-pytorch-cuda111x:latest
+        - name: Build & Push TF2 CUDA 10 image
+          uses: docker/build-push-action@v2
+          with:
+              file: docker/Dockerfile.tf2-cuda10 
+              push: true
+              tags: meadml/mead2-tf2-gpu:latest
+        - name: Build & Push TF2 CUDA 11 image
+          uses: docker/build-push-action@v2
+          with:
+              file: docker/Dockerfile.tf2-cuda11
+              push: true
+              tags: meadml/mead2-tf2-cuda11:latest
+

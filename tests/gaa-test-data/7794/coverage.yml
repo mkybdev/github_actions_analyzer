@@ -1,0 +1,27 @@
+name: Coverage
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    name: Coverage
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: ['20']
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: npm install, build, and test
+        run: |
+          npm install --no-progress
+          CI=true npm t -- --runInBand --coverage
+          bash <(curl -s https://codecov.io/bash) -t ${{ secrets.CODECOV_TOKEN }}

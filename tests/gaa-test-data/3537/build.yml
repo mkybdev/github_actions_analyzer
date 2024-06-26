@@ -1,0 +1,152 @@
+name: Build
+
+on:
+  # Build on new commits or pull requests.
+  push:
+    paths-ignore:
+      - '**.md'
+  pull_request:
+  schedule:
+    # Run every week just to make sure the CI environment still works.
+    - cron: '0 0 * * 0'
+
+env:
+  DOTNET_VERSION: 8.0.x
+
+jobs:
+  build-ubuntu:
+    runs-on: ubuntu-22.04
+
+    # Test building with .NET 7 and .NET 8
+    strategy:
+      matrix:
+        dotnet_version: [7.0.x, 8.0.x]
+
+    env:
+      # Skip pkg-config version checks. Ubuntu 22.04 doesn't have a recent
+      # enough version of the libraries for some symbols needed at runtime,
+      # but this doesn't matter for building.
+      ADW_1_CFLAGS: undefined
+      ADW_1_LIBS: undefined
+      GTK_CFLAGS: undefined
+      GTK_LIBS: undefined
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{matrix.dotnet_version}}
+    - name: Create temporary global.json
+      if: matrix.dotnet_version == '7.0.x'
+      run: mv .github/workflows/dotnet7.global.json ./global.json
+    - name: Install Apt Dependencies
+      run: |
+        sudo apt update
+        sudo apt install autotools-dev autoconf-archive gettext intltool libadwaita-1-dev
+    - name: Generate Tarball
+      run: |
+        ./autogen.sh
+        make dist
+    - name: Build
+      run: |
+        ./autogen.sh --prefix ${{ runner.temp }}
+        make build
+    - name: Test
+      run: make test
+    - name: Verify code formatting
+      # Ignore warning CA1416 for unavailable platform-specific code, since this is unrelated to formatting.
+      run: dotnet format --no-restore --verify-no-changes --exclude-diagnostics CA1416
+    - name: Test Install
+      run: make install
+    - name: Build Installer
+      run: make releasezip
+    - name: Upload Installer
+      uses: actions/upload-artifact@v4
+      with:
+        name: Pinta-linux-dotnet-${{matrix.dotnet_version}}.zip
+        path: pinta-2.2.zip
+        if-no-files-found: error
+
+  build-macos:
+    runs-on: macos-12
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{env.DOTNET_VERSION}}
+    - name: Install Dependencies
+      env:
+        # Work around webp-pixbuf-loader issue: https://github.com/Homebrew/homebrew-core/issues/139497
+        HOMEBREW_NO_INSTALL_FROM_API: 1
+      run: brew install libadwaita adwaita-icon-theme gettext webp-pixbuf-loader
+    - name: Build
+      run: dotnet build Pinta.sln -c Release
+    - name: Test
+      run: dotnet test Pinta.sln -c Release
+
+    - name: Add Cert to Keychain
+      if: github.event_name != 'pull_request'
+      uses: apple-actions/import-codesign-certs@v3
+      with:
+        p12-file-base64: ${{ secrets.MAC_CERTS_BASE64 }}
+        p12-password: ${{ secrets.MAC_CERTS_PASSWORD }}
+
+    - name: Build Installer
+      if: github.event_name != 'pull_request'
+      env:
+        MAC_DEV_PASSWORD: ${{ secrets.MAC_DEV_PASSWORD }}
+      run: |
+        cd installer/macos
+        ./build_installer.sh
+
+    - name: Upload Installer
+      if: github.event_name != 'pull_request'
+      uses: actions/upload-artifact@v4
+      with:
+        name: "Pinta.dmg"
+        path: installer/macos/Pinta.dmg
+        if-no-files-found: error
+
+  build-windows:
+    runs-on: windows-2022
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    steps:
+    - uses: actions/checkout@v4
+    - uses: microsoft/setup-msbuild@v2.0.0
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: ${{env.DOTNET_VERSION}}
+    - name: Install dependencies
+      uses: msys2/setup-msys2@v2
+      with:
+        path-type: inherit # Inherit the path so that dotnet can be found
+        update: true
+        install: mingw-w64-x86_64-libadwaita mingw-w64-x86_64-webp-pixbuf-loader
+    - name: Build
+      run: dotnet build Pinta.sln -c Release -p:MinGWFolder=${MINGW_PREFIX}
+    - name: Test
+      run: dotnet test Pinta.sln -c Release -p:MinGWFolder=${MINGW_PREFIX}
+
+    # Note that msgfmt is already available from the Git for Windows installation!
+    - name: Build Installer
+      run: |
+        choco install innosetup -y -v
+        dotnet publish Pinta.sln -p:BuildTranslations=true -p:MinGWFolder=${MINGW_PREFIX} -c Release -r win-x64 --self-contained true -p:PublishDir=../release/bin
+        cp -r release/bin/icons release/bin/locale release/share/
+        rm -rf release/bin/icons release/bin/locale
+        cp installer/macos/hicolor.index.theme release/share/icons/hicolor/index.theme
+        iscc installer/windows/installer.iss
+
+    - name: Upload Installer
+      uses: actions/upload-artifact@v4
+      with:
+        name: "Pinta.exe"
+        path: installer/windows/Pinta.exe
+        if-no-files-found: error

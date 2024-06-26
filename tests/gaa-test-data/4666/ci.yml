@@ -1,0 +1,76 @@
+name: CI
+on:
+  # Run action when pushed to master, or for commits in a pull request.
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+jobs:
+  tests:
+    name: Add-on testing
+    runs-on: ${{ matrix.os }}
+    env:
+      PYTHONIOENCODING: utf-8
+      PYTHONPATH: ${{ github.workspace }}/lib:${{ github.workspace }}/tests
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ ubuntu-latest ]
+        python-version: [ '3.7', '3.8', '3.9', '3.10', '3.11' ]
+    steps:
+    - name: Check out ${{ github.sha }} from repository ${{ github.repository }}
+      uses: actions/checkout@v2
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v3
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Install dependencies
+      run: |
+        sudo apt-get install gettext
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+    - name: Run tox
+      run: python -m tox -q -e flake8,py
+    - name: Run pylint
+      run: python -m pylint lib/ tests/
+    - name: Compare translation strings
+      run: make check-translations
+    - name: Check for untranslated strings
+      run: make check-untranslated
+      continue-on-error: true
+    - name: Start proxy server
+      run: python -m proxy --threaded --hostname 127.0.0.1 --log-level DEBUG &
+    - name: Run unit tests for API
+      run: coverage run -m unittest tests/test_api.py
+    - name: Run unit tests for Android ARM
+      run: coverage run -m unittest tests/test_ishelper_android_arm.py
+    - name: Run unit tests for Linux ARM
+      run: coverage run -m unittest tests/test_ishelper_linux_arm.py
+    - name: Run unit tests for Linux x64
+      run: coverage run -m unittest tests/test_ishelper_linux_x64.py
+    - name: Run unit tests for MacOS x64
+      run: coverage run -m unittest tests/test_ishelper_macos_x64.py
+    - name: Run unit tests for Windows x64
+      run: coverage run -m unittest tests/test_ishelper_windows_x64.py
+    - name: Run unit tests for proxy
+      run: coverage run -m unittest tests/test_proxy.py
+    - name: Run addon using cli
+      run: coverage run -a default.py
+    - name: Upload code coverage to CodeCov
+      uses: codecov/codecov-action@v1
+      continue-on-error: true
+    - name: Analyze with SonarCloud
+      uses: SonarSource/sonarcloud-github-action@v1.4
+      with:
+        args: >
+          -Dsonar.organization=emilsvennesson
+          -Dsonar.projectKey=emilsvennesson_script.module.inputstreamhelper
+          -Dsonar.sources=lib/
+          -Dsonar.tests=tests/
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      continue-on-error: true

@@ -1,0 +1,143 @@
+---
+name: CI
+
+# yamllint disable-line rule:truthy
+on:
+  pull_request:
+    branches:
+      - "*"
+  push:
+    branches:
+      - master
+
+concurrency:
+  group: build-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build.${{ matrix.heroku }}-${{ matrix.buildx }}
+    runs-on: ubuntu-20.04
+    strategy:
+      fail-fast: true
+      matrix:
+        buildx:
+          - "true"
+          - "false"
+        heroku:
+          - 20
+          - 22
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.17.8
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: 3.3
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.7.x"
+
+      - name: setup env
+        run: make ci-report
+
+      - name: shellcheck
+        run: make shellcheck
+
+      - name: install requirements
+        run: make deps fpm package_cloud
+
+      - name: set up qemu
+        uses: docker/setup-qemu-action@v3
+
+      - name: set up docker buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: inspect builder
+        run: |
+          echo "Name:      ${{ steps.buildx.outputs.name }}"
+          echo "Endpoint:  ${{ steps.buildx.outputs.endpoint }}"
+          echo "Status:    ${{ steps.buildx.outputs.status }}"
+          echo "Flags:     ${{ steps.buildx.outputs.flags }}"
+          echo "Platforms: ${{ steps.buildx.outputs.platforms }}"
+
+      - name: build
+        run: |
+          if [[ "${{ matrix.buildx }}" == "true" ]]; then
+            make build/docker/${{ matrix.heroku }} STACK_VERSION=${{ matrix.heroku }}
+          else
+            make build build/docker/${{ matrix.heroku }} BUILDX=false STACK_VERSION=${{ matrix.heroku }}
+          fi
+
+      - name: bash tests
+        run: |
+          if [[ "${{ matrix.buildx }}" == "false" ]]; then
+            basht tests/**/tests.sh
+          fi
+
+      - name: upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ matrix.heroku }}-${{ matrix.buildx }}
+          path: build
+
+  unit-tests:
+    name: unit.heroku-${{ matrix.heroku }}.${{ matrix.buildpack }}
+    needs: build
+    runs-on: ubuntu-20.04
+    strategy:
+      fail-fast: false
+      matrix:
+        buildpack:
+          - buildpack-clojure
+          - buildpack-go
+          - buildpack-gradle
+          - buildpack-java
+          - buildpack-multi
+          - buildpack-nodejs
+          - buildpack-null
+          - buildpack-php
+          - buildpack-play
+          - buildpack-python
+          - buildpack-ruby
+          - buildpack-scala
+          - buildpack-static
+        heroku:
+          - 20
+          - 22
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 1.17.8
+
+      - name: download packages
+        uses: actions/download-artifact@v4
+        with:
+          name: build-${{ matrix.heroku }}-false
+          path: build
+
+      - name: validate packages
+        run: |
+          ls -lah build build/*
+
+      - name: install requirements
+        run: make deps
+
+      - name: build docker images
+        run: make build/docker/${{ matrix.heroku }} BUILDX=false STACK_VERSION=${{ matrix.heroku }}
+
+      - name: run buildpack test
+        run: |
+          echo "executing ${{ matrix.buildpack }} tests"
+          basht buildpacks/${{ matrix.buildpack }}/tests/*/test.sh

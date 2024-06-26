@@ -1,0 +1,100 @@
+---
+name: Build RPM packages
+
+on:
+  # Triggers the workflow on push or pull request events but only for the master branch
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  build_packages:
+    strategy:
+      matrix:
+        build_type:
+          - auto
+          - manual
+        version:
+          - 9
+          - 8
+          - 7
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python environment
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Build packages
+        run: make ${{ matrix.build_type }}${{ matrix.version }}
+
+      - name: Cache built packages
+        uses: actions/cache@v3
+        id: restore-build
+        with:
+          path: _dist${{ matrix.version }}/*
+          key: ${{ github.sha }}-${{ matrix.build_type }}${{ matrix.version }}
+
+  publish_packages:
+    needs: build_packages
+    if: github.ref == 'refs/heads/master' && github.repository == 'lest/prometheus-rpm'
+    strategy:
+      matrix:
+        version:
+          - 9
+          - 8
+          - 7
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Ruby environment
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: 2.7
+
+      - name: Install PackageCloud CLI
+        run: gem install package_cloud
+
+      - name: Create GPG key secret
+        if: env.RPM_GPG_KEY_SECRET != null
+        run: openssl aes-256-cbc -k "${RPM_GPG_KEY_SECRET}" -in secret.asc.enc -out secret.asc -d -md md5
+        env:
+          RPM_GPG_KEY_SECRET: ${{ secrets.RPM_GPG_KEY_SECRET }}
+
+      - name: Save GPG key passphrase
+        if: env.RPM_GPG_KEY_PASSPHRASE != null
+        run: echo "${RPM_GPG_KEY_PASSPHRASE}" > .passphrase
+        env:
+          RPM_GPG_KEY_PASSPHRASE: ${{ secrets.RPM_GPG_KEY_PASSPHRASE }}
+
+      - name: Restore auto RPM package cache
+        uses: actions/cache@v3
+        with:
+          path: _dist${{ matrix.version }}/*
+          key: ${{ github.sha }}-auto${{ matrix.version }}
+
+      - name: Restore manual RPM package cache
+        uses: actions/cache@v3
+        with:
+          path: _dist${{ matrix.version }}/*
+          key: ${{ github.sha }}-manual${{ matrix.version }}
+
+      - name: Publish
+        run: make publish${{ matrix.version }}
+        env:
+          PACKAGECLOUD_TOKEN: ${{ secrets.PACKAGECLOUD_TOKEN }}

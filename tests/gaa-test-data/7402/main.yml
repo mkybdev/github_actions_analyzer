@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - php-versions: '5.6'
+            phpunit-versions: '5.7.27'
+          - php-versions: '7.0'
+            phpunit-versions: '6.5.14'
+          - php-versions: '7.1'
+            phpunit-versions: '7.5.20'
+          - php-versions: '7.2'
+            phpunit-versions: '7.5.20'
+          - php-versions: '7.3'
+            phpunit-versions: '7.5.20'
+          - php-versions: '7.4'
+            phpunit-versions: '7.5.20'
+#          - php-versions: '8.0'
+#            phpunit-versions: '9.5.1'
+
+    name: PHP ${{ matrix.php-versions }}, PHPUnit ${{ matrix.phpunit-versions }}
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: ${{ matrix.php-versions }}
+        coverage: xdebug
+        tools: phpunit:${{ matrix.phpunit-versions }}
+        extensions: pdo_sqlite
+
+    - name: Install Dependencies
+      uses: ramsey/composer-install@v2
+
+    - name: Run Tests
+      run: |
+        mkdir -p build/logs
+        phpunit --coverage-clover build/logs/clover.xml
+
+    - name: Downloading Scrutinizer CI binary
+      run: wget https://scrutinizer-ci.com/ocular.phar
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+
+    - name: Uploading code coverage to Scrutinizer CI
+      run: php ocular.phar code-coverage:upload --format=php-clover build/logs/clover.xml
+

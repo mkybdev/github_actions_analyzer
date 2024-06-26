@@ -1,0 +1,52 @@
+name: Node CI
+
+on: [push]
+
+jobs:
+  validate-types:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Use Bun
+        uses: oven-sh/setup-bun@v1
+
+      - name: Install npm dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Validate types
+        run: bun run validate-types
+
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Use Bun
+        uses: oven-sh/setup-bun@v1
+
+      - name: Install npm dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Lint
+        run: bun run lint
+
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Use Bun
+        uses: oven-sh/setup-bun@v1
+
+      - name: Install npm dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build
+        run: bun run build

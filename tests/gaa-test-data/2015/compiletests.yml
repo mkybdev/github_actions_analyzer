@@ -1,0 +1,23 @@
+name: Compile Test
+
+on: [push, pull_request]
+
+jobs:
+    compiletest:
+        runs-on: ubuntu-latest
+
+        env:
+            RUST_BACKTRACE: 1
+            RUSTFLAGS: "--cfg compiletests"
+
+        steps:
+            - uses: actions/checkout@v4
+
+            - uses: dtolnay/rust-toolchain@1.59.0
+
+            - name: main crate
+              run: |
+                  cd derive_builder
+                  cargo build --verbose
+                  cargo test --no-fail-fast --verbose -- --nocapture
+                  cargo doc

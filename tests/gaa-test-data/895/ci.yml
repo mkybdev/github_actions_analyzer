@@ -1,0 +1,57 @@
+name: CI
+
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm run test
+        env:
+          CI: true
+
+      - name: Coverage
+        uses: codecov/codecov-action@v2
+
+      - name: Build
+        run: npm run build
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install
+        run: npm ci
+
+      - name: Setup
+        run: docker-compose up -d
+
+      - name: Wait for MSSQL
+        uses: jakejarvis/wait-action@master
+        with:
+          time: '10s'
+
+      - name: Restore
+        shell: pwsh
+        run: .\docker\restore.ps1
+
+      - name: Build
+        run: |
+          npm run build
+          sudo npm link
+
+      - name: Test
+        run: |
+          ssc pull -c ./docker/config.json
+          npm run e2e:docker

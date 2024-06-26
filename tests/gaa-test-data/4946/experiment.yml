@@ -1,0 +1,16 @@
+name: Experiment
+
+on:
+  workflow_dispatch:
+    inputs:
+      selected-environment:
+        description: 'Environment to use for this workflow'
+        type: environment
+        required: true
+
+jobs:
+  print-environment:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Print the environment name to STDOUT
+        run: echo  Environment is ${{ inputs.selected-environment.url }}

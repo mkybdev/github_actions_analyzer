@@ -1,0 +1,38 @@
+name: Test and release
+
+on:
+  push:
+    branches: [master]
+  release:
+    types: [published]
+  pull_request_target:
+    branches: [master]
+
+jobs:
+  build:
+    name: Build and release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v3
+        with:
+          node-version: '10.14.0'
+     
+      - name: Vesion check
+        run: node --version
+
+      - name: Install
+        run: yarn install
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        if: ${{ success() && github.event_name == 'release' }}
+        run: yarn build
+
+      - name: Publish
+        if: ${{ success() && github.event_name == 'release' }}
+        uses: JS-DevTools/npm-publish@v1
+        with:
+          token: ${{ secrets.NPM_TOKEN }}

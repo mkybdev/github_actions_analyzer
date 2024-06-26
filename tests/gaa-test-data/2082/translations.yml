@@ -1,0 +1,31 @@
+name: Translations Validation
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "translations/**"
+env:
+  GOPROXY: https://proxy.golang.org
+  GO_VERSION: '1.22.4'
+permissions:
+  contents: read
+
+jobs:
+  unit_test:
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332
+      - uses: actions/setup-go@cdcb36043654635271a94b9a6d1392de5bb323a7
+        with:
+          go-version: ${{env.GO_VERSION}}
+      - name: Install libvirt
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvirt-dev
+      - name: Download Dependencies
+        run: go mod download
+      - name: Unit Test
+        env:
+          TESTSUITE: unittest
+        run: make test
+        continue-on-error: false

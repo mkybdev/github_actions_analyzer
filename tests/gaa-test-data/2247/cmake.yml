@@ -1,0 +1,68 @@
+name: Debug CI
+
+# Run debug builds on all branches & PRs
+on: [push, pull_request]
+
+env:
+  BUILD_TYPE: Debug
+
+jobs:
+  ubuntu-build:
+    # The CMake configure and build commands are platform agnostic and should work equally
+    # well on Windows or Mac.  You can convert this to a matrix build if you need
+    # cross-platform coverage.
+    # See: https://docs.github.com/en/free-pro-team@latest/actions/learn-github-actions/managing-complex-workflows#using-a-build-matrix
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+      with:
+        submodules: recursive
+
+
+    - name: Create Build Environment
+      # Create working directory
+      run: cmake -E make_directory ${{github.workspace}}/build
+
+    - name: Configure CMake
+      working-directory: ${{github.workspace}}/build
+      run: cmake $GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$BUILD_TYPE
+
+    - name: Build
+      working-directory: ${{github.workspace}}/build
+      run: cmake --build . --config $BUILD_TYPE --target=PackagedBuild
+
+    - name: Archive build package / binaries
+      uses: actions/upload-artifact@v2
+      with:
+        name: ubuntu-package
+        path: ${{github.workspace}}/bin/Jupiter Bot Binaries.*
+
+  windows-build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: recursive
+
+
+      - name: Create Build Environment
+        # Create working directory & install non-default dependencies (openssl)
+        run: |
+          cmake -E make_directory ${{github.workspace}}/build
+          choco install openssl -y --limit-output
+
+      - name: Configure CMake
+        working-directory: ${{github.workspace}}/build
+        run: cmake $env:GITHUB_WORKSPACE -DCMAKE_BUILD_TYPE=$env:BUILD_TYPE
+
+      - name: Build
+        working-directory: ${{github.workspace}}/build
+        run: cmake --build . --config $env:BUILD_TYPE --target=PackagedBuild
+
+      - name: Archive build package / binaries
+        uses: actions/upload-artifact@v2
+        with:
+          name: windows-package
+          path: ${{github.workspace}}/bin/Jupiter Bot Binaries.*

@@ -1,0 +1,83 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['py38', 'py311', 'py312']
+        django-env: ['django32']
+        test: ['acceptance-python', 'test-python', 'quality-and-jobs']
+    steps:
+      - uses: actions/checkout@v2
+      - name: Setup and Format Python Version
+        id: format_python_version
+        shell: bash
+        run: |
+          # Remove 'py' and insert a dot to format the version
+          FORMATTED_VERSION=${{ matrix.python-version }}   # e.g., py38
+          FORMATTED_VERSION=${FORMATTED_VERSION/py3/3.}    # becomes 3.8
+          # Set environment variables
+          echo "PYTHON_VERSION=$FORMATTED_VERSION" >> $GITHUB_ENV
+      - name: Start container
+        run: |
+          docker compose -f ./.ci/docker-compose-ci.yml up -d
+          docker exec ecommerce_testing bash -c "
+          sudo apt-get update -y &&
+          sudo apt-get install python$PYTHON_VERSION \
+          python$PYTHON_VERSION-dev \
+          python$PYTHON_VERSION-distutils \
+          default-libmysqlclient-dev build-essential pkg-config -y &&
+          curl -sS https://bootstrap.pypa.io/get-pip.py | python$PYTHON_VERSION;"
+        # Need to install pip from source here^ otherwise some packages don't get installed
+      - name: Install dependencies
+        run: |
+          docker exec -t ecommerce_testing bash -c "
+            cd /edx/app/ecommerce/ecommerce/ &&
+            python$PYTHON_VERSION -m pip install tox
+          "
+      - name: Run tests
+        run: |
+          docker exec -t -e CI=1 ecommerce_testing bash -c "
+            cd /edx/app/ecommerce/ecommerce/ &&
+            PATH=\$PATH:/edx/app/ecommerce/nodeenvs/ecommerce/bin:/snap/bin
+            DJANGO_ENV=${{ matrix.django-env }} PYTHON_ENV=${{ matrix.python-version }} PYTHON_VERSION=$PYTHON_VERSION make ${{ matrix.test }}
+          "
+      - name: Run coverage
+        if: matrix.test == 'test-python'
+        run: |
+          docker exec ecommerce_testing /edx/app/ecommerce/ecommerce/.ci/run_coverage.sh
+      - name: Setup Python
+        if: matrix.test == 'test-python' && matrix.python-version == 'py38'
+        uses: actions/setup-python@v2
+        with:
+          python-version: "3.8"
+          architecture: x64
+      - name: Report coverage
+        if: matrix.test == 'test-python' && matrix.python-version == 'py38'
+        uses: codecov/codecov-action@v3
+        with:
+          flags: unittests
+          fail_ci_if_error: false
+
+  docs:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.8', '3.11', '3.12']
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-python@v2
+        with:
+          python-version: ${{matrix.python-version}}
+          architecture: x64
+      - name: Install Dependencies
+        run: pip install -r requirements/docs.txt -r requirements/tox.txt
+      - name: Build the docs
+        run: make docs

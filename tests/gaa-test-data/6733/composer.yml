@@ -1,0 +1,40 @@
+name: Composer
+
+on: [ push ]
+
+# Cancels all previous workflow runs for the same branch that have not yet completed.
+concurrency:
+    # The concurrency group contains the workflow name and the branch name.
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: true
+
+jobs:
+    composer:
+        runs-on: ${{ matrix.os }}
+        strategy:
+            fail-fast: false
+            matrix:
+                os: [ ubuntu-latest ]
+                php: [ '7.4', '8.0', '8.1' ]
+
+        steps:
+            -   name: Checkout
+                uses: actions/checkout@v4
+
+            -   name: Setup PHP
+                uses: shivammathur/setup-php@2.30.5
+                with:
+                    php-version: ${{ matrix.php }}
+                    coverage: none # disable xdebug, pcov
+                    tools: symfony
+                    extensions: ast, intl
+
+            -   name: Install Composer deps
+                uses: ramsey/composer-install@v3
+                with:
+                    composer-options: --no-scripts
+
+            -   name: Run Composer
+                run: |
+                    symfony security:check
+                    composer validate --strict --no-check-lock

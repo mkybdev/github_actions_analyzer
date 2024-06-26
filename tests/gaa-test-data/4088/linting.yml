@@ -1,0 +1,42 @@
+name: Linting
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4.1.7
+
+      - uses: actions/setup-node@v4.0.2
+        with:
+          node-version: 18
+
+      - name: Environment Information
+        run: |
+          node --version
+          npm --version
+
+      - name: Linting
+        run: |
+          npm ci
+          npm run lint
+
+  auto-merge:
+    runs-on: ubuntu-latest
+    needs: build
+
+    permissions:
+      pull-requests: write
+      contents: write
+
+    steps:
+      - name: Automatically merge dependabot upgrades
+        uses: fastify/github-action-merge-dependabot@v3.10.1
+        with:
+          target: minor

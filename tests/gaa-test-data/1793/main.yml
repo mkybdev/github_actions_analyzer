@@ -1,0 +1,135 @@
+# This is a basic workflow to help you get started with Actions
+
+name: CI
+
+# Controls when the workflow will run
+on:
+  # Triggers the workflow on push or pull request events but only for the master branch
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ '**' ]
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  tests:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        DJANGO_VERSION: ['4.2.*', '5.0.*', '5.1.*']
+        python-version: ['3.8', '3.9', '3.10', '3.11', '3.12']
+        import-export: ['3.3.5', '4.0.*']
+        exclude:
+          - DJANGO_VERSION: '5.0.*'
+            python-version: '3.8'
+          - DJANGO_VERSION: '5.0.*'
+            python-version: '3.9'
+
+          - DJANGO_VERSION: '5.1.*'
+            python-version: '3.8'
+          - DJANGO_VERSION: '5.1.*'
+            python-version: '3.9'
+      fail-fast: false
+
+    services:
+      postgres:
+        image: postgres
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      mariadb:
+        image: mariadb:10.5.21
+        env:
+          MARIADB_DATABASE: mariadb
+          MYSQL_ALLOW_EMPTY_PASSWORD: yes
+        options: --health-cmd="mysqladmin ping" --health-interval=5s --health-timeout=2s --health-retries=3
+        ports:
+          - 3306:3306
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v2
+        with:
+              python-version: ${{ matrix.python-version }}
+      - uses: actions/cache@v2
+        with:
+          path: ~/.cache/pip
+          key: ${{ hashFiles('setup.py') }}-${{ matrix.DJANGO_VERSION }}-${{ matrix.import-export }}
+
+      - name: Install
+        run: |
+           sudo apt-get update
+           sudo apt-get install -y mariadb-client
+           pip install -r requirements_test.txt
+           python setup.py develop
+           pip install -e .
+           pip install Django==${{ matrix.DJANGO_VERSION }} --pre
+           pip install django-import-export==${{ matrix.import-export }}
+           pip install codecov
+
+      - name: Check Migrations
+        run: |
+          pip install "py-moneyed<3" --upgrade
+          PYTHONPATH=`pwd` ./manage.py makemigrations --check hordak
+          pip install "py-moneyed>=3" --upgrade  # Different version of py-moneyed should not create different migrations
+          PYTHONPATH=`pwd` ./manage.py makemigrations --check hordak
+
+      - name: Testing (PostgreSQL)
+        run: |
+          PYTHONPATH=`pwd` python -Wall -W error::DeprecationWarning -m coverage run ./manage.py test hordak
+          pip install -e .[subqueries]
+          PYTHONPATH=`pwd` python -Wall -W error::DeprecationWarning -m coverage run --append ./manage.py test hordak  # Test with subquery
+          coverage xml && codecov
+        env:
+          DATABASE_URL: "postgresql://postgres:postgres@localhost/postgres"
+      - name: Testing (MariaDB)
+        run: |
+          PYTHONPATH=`pwd` ./manage.py makemigrations --check hordak
+
+          PYTHONPATH=`pwd` python -Wall -W error::DeprecationWarning -m coverage run ./manage.py test hordak
+          pip install -e .[subqueries]
+          PYTHONPATH=`pwd` python -Wall -W error::DeprecationWarning -m coverage run --append ./manage.py test hordak  # Test with subquery
+          coverage xml && codecov
+        env:
+          DATABASE_URL: "mysql://root@127.0.0.1:3306/mariadb"
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Set up Python
+        uses: actions/setup-python@v2
+      - uses: actions/cache@v2
+        with:
+          path: ~/.cache/pip
+          key: ${{ hashFiles('setup.py') }}-${{ matrix.DJANGO_VERSION }}
+
+      - name: Install
+        run: |
+          pip install flake8 isort black mypy django-stubs dj_database_url types-six types-requests types-mock
+          pip install "django-stubs<1.13.0"  # Remove this line once https://github.com/typeddjango/django-stubs/issues/1227 is fixed
+          pip install -r requirements_test.txt
+          python setup.py develop
+          pip install -e .
+      - name: Running Flake8
+        run: flake8
+      - name: Running isort
+        run: python -m isort . --check-only --diff
+      - name: Running black
+        run: black --check .
+      - name: Running mypy
+        run: mypy .

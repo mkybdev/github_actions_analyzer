@@ -1,0 +1,26 @@
+name: vs2022
+on: [push, workflow_dispatch]
+
+jobs:
+  job:
+    name: ${{ matrix.buildType }}
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        buildType: [Release]
+
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: true
+      
+      - id: build
+        uses: ./.github/actions/cmake-build
+        with:
+          cxx: cl.exe
+          cc: cl.exe
+          triplet: x64-windows
+          generator: Visual Studio 17 2022
+          buildDir: ${{ runner.workspace }}/b
+          outputDir: ${{ runner.workspace }}/b/samples/${{ matrix.buildType }}

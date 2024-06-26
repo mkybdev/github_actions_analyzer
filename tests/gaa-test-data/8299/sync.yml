@@ -1,0 +1,27 @@
+name: Sync conda channels
+
+on:
+  schedule:
+    - cron: '0 2 * * *'
+  push:
+    branches:
+    - main
+    tags:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  tests:
+    name: Sync conda channels
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+    - name: Set up Python
+      uses: actions/setup-python@v2
+    - name: Install dependencies
+      run: pip install anaconda-client
+    - name: Run sync
+      run: ./sync.sh
+      env:
+        BINSTAR_TOKEN: ${{ secrets.BINSTAR_TOKEN }}

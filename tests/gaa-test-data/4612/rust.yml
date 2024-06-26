@@ -1,0 +1,45 @@
+name: Rust
+
+on:
+  push:
+    branches:
+      - master
+  pull_request: {}
+
+jobs:
+  test-oss:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+    - name: apt
+      run: sudo apt update && sudo apt install -y gfortran
+    - uses: actions-rs/cargo@v1
+      with:
+        command: test
+        args: --features=oss --no-default-features
+
+  test-intel-mkl:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+    - uses: actions-rs/cargo@v1
+      with:
+        command: test
+        args: --features=intel-mkl --no-default-features
+
+  check-format:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+    - uses: actions-rs/cargo@v1
+      with:
+        command: fmt
+        args: -- --check
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+    - uses: actions-rs/cargo@v1
+      with:
+        command: clippy

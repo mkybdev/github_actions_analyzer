@@ -1,0 +1,49 @@
+name: tests
+
+on:
+  push:
+    branches:
+      - master
+      - '!gh-pages'
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v1.4.1
+        with:
+          node-version: 13
+      - run: yarn
+      - run: yarn lint
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v1.4.1
+        with:
+          node-version: 13
+      - run: yarn
+      - run: sudo yarn build
+  unit-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v1.4.1
+        with:
+          node-version: 13
+      - run: yarn
+      - name: Run unit tests
+        run: yarn test all --no-watch
+  sass-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v1.4.1
+        with:
+          node-version: 13
+      - run: yarn
+      - name: Run Sass tests
+        run: |
+          yarn lint:css

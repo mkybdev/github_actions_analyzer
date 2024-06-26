@@ -1,0 +1,76 @@
+name: Tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: "py${{ matrix.python-version }} / ${{ matrix.os }} / ${{ matrix.nox-session }}"
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.9", "3.11"]
+        os: [ubuntu-latest]
+        nox-session: ["tests"]
+        include:
+          - os: macos-12
+            python-version: "3.11"
+            nox-session: "tests"
+          - os: macos-14
+            python-version: "3.11"
+            nox-session: "tests"
+          - os: ubuntu-latest
+            python-version: "3.11"
+            nox-session: "options"
+    steps:
+      - name: Clone the repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: recursive
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+        # if: ${{ runner.os != 'Windows' }}
+      - name: Set up Linux
+        run: |
+          sudo add-apt-repository ppa:ubuntu-toolchain-r/test
+          sudo apt-get update
+          sudo apt-get install -y gcc g++ gfortran
+        if: ${{ runner.os == 'Linux' }}
+      - name: Set up macOS-12
+        run: brew unlink gfortran && brew link --overwrite gfortran
+        if: ${{ matrix.os == 'macos-12' }}
+      - name: Set up macOS-14
+        run: brew install gfortran
+        if: ${{ matrix.os == 'macos-14' }}
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ matrix.os }}-pip-${{ matrix.python-version }}-${{ matrix.nox-session }}-${{ hashFiles('**/pyproject.toml') }}-${{ hashFiles('**/noxfile.py') }}
+          restore-keys: |
+            ${{ matrix.os }}-pip-${{ matrix.python-version }}-${{ matrix.nox-session }}-${{ hashFiles('**/pyproject.toml') }}-
+            ${{ matrix.os }}-pip-${{ matrix.python-version }}-${{ matrix.nox-session }}-
+      - name: Cache nox session files
+        uses: actions/cache@v4
+        with:
+          path: .nox
+          key: ${{ matrix.os }}-nox-${{ matrix.python-version }}-${{ matrix.nox-session }}-${{ hashFiles('**/noxfile.py') }}
+          restore-keys: |
+            ${{ matrix.os }}-nox-${{ matrix.python-version }}-${{ matrix.nox-session }}-
+      - name: Install dependencies
+        run: |
+          python -m pip install -U pip
+          python -m pip install -U nox
+      - name: Run tests
+        run: python -m nox --non-interactive --no-error-on-missing-interpreters -s ${{ matrix.nox-session }}-${{ matrix.python-version }}
+        env:
+          SPS_HOME: ${{ github.workspace }}/src/fsps/libfsps

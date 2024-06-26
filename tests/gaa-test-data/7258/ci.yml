@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+env:
+  DOTNET_VERSION: '6.0.x'
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: Setup .NET Core
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: ${{env.DOTNET_VERSION}}
+    - name: Build
+      run: dotnet build --configuration Release
+    - name: Start Mountebank
+      run: docker compose up -d
+    - name: Test
+      run: dotnet test --configuration Release --no-build
+    - name: Stop Mountebank
+      run: docker compose down

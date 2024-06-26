@@ -1,0 +1,137 @@
+name: Build and test
+
+on:
+  push:
+  pull_request:
+
+env:
+  REGISTRY: quay.io
+  IMAGE_NAME: acoustid/acoustid-server
+
+jobs:
+
+  test:
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        python_version: [ '3.10' ]
+
+    services:
+      postgresql:
+        image: quay.io/acoustid/postgresql:master
+        ports:
+          - 5432/tcp
+        env:
+          POSTGRES_USER: acoustid
+          POSTGRES_PASSWORD: acoustid
+          POSTGRES_DB: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      redis:
+        image: redis
+        ports:
+          - 6379/tcp
+      index:
+        image: quay.io/acoustid/acoustid-index:2018.01.13
+        ports:
+          - 6080/tcp
+
+    steps:
+
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Install python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python_version }}
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Install tox
+        run: pip install tox
+
+      - name: Lint on the source code
+        run: |
+            tox -e flake8,mypy,isort,black
+        env:
+          PYTHON_VERSION: ${{ matrix.python_version }}
+
+      - name: Install additional requirements
+        run: |
+          sudo apt-get update
+          sudo apt-get install libchromaprint1 libpq-dev
+
+      - name: Setup database
+        run: |
+          container=$(docker ps -q -f expose=5432)
+          docker exec -i -e PGUSER=$PGUSER -e PGPASSWORD=$PGPASSWORD -e PGDATABASE=$PGDATABASE $container psql < ./admin/ci/create_db.sql
+        env:
+          PGUSER: acoustid
+          PGPASSWORD: acoustid
+          PGDATABASE: postgres
+
+      - name: Run tests
+        run: |
+          tox -e py${{ matrix.python_version }}
+        env:
+          PYTHON_VERSION: ${{ matrix.python_version }}
+          ACOUSTID_TEST_DATABASE_APP_HOST: localhost
+          ACOUSTID_TEST_DATABASE_APP_PORT: ${{ job.services.postgresql.ports['5432'] }}
+          ACOUSTID_TEST_DATABASE_APP_RO_HOST: localhost
+          ACOUSTID_TEST_DATABASE_APP_RO_PORT: ${{ job.services.postgresql.ports['5432'] }}
+          ACOUSTID_TEST_DATABASE_FINGERPRINT_HOST: localhost
+          ACOUSTID_TEST_DATABASE_FINGERPRINT_PORT: ${{ job.services.postgresql.ports['5432'] }}
+          ACOUSTID_TEST_DATABASE_FINGERPRINT_RO_HOST: localhost
+          ACOUSTID_TEST_DATABASE_FINGERPRINT_RO_PORT: ${{ job.services.postgresql.ports['5432'] }}
+          ACOUSTID_TEST_DATABASE_INGEST_HOST: localhost
+          ACOUSTID_TEST_DATABASE_INGEST_PORT: ${{ job.services.postgresql.ports['5432'] }}
+          ACOUSTID_TEST_DATABASE_INGEST_RO_HOST: localhost
+          ACOUSTID_TEST_DATABASE_INGEST_RO_PORT: ${{ job.services.postgresql.ports['5432'] }}
+          ACOUSTID_TEST_DATABASE_MUSICBRAINZ_HOST: localhost
+          ACOUSTID_TEST_DATABASE_MUSICBRAINZ_PORT: ${{ job.services.postgresql.ports['5432'] }}
+          ACOUSTID_TEST_DATABASE_MUSICBRAINZ_RO_HOST: localhost
+          ACOUSTID_TEST_DATABASE_MUSICBRAINZ_RO_PORT: ${{ job.services.postgresql.ports['5432'] }}
+          ACOUSTID_TEST_REDIS_HOST: localhost
+          ACOUSTID_TEST_REDIS_PORT: ${{ job.services.redis.ports['6379'] }}
+          ACOUSTID_TEST_INDEX_HOST: localhost
+          ACOUSTID_TEST_INDEX_PORT: ${{ job.services.index.ports['6080'] }}
+
+  build:
+    runs-on: ubuntu-22.04
+    needs: [ test ]
+
+    steps:
+    
+      - name: Check out code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract metadata (tags, labels) for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+
+      - name: Log in to the Container registry
+        if: github.event_name != 'pull_request' && github.actor != 'dependabot[bot]'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.QUAY_USERNAME }}
+          password: ${{ secrets.QUAY_PASSWORD }}
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: ${{ github.event_name != 'pull_request' && github.actor != 'dependabot[bot]' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:master
+          cache-to: type=inline

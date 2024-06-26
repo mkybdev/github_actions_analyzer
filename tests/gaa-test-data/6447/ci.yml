@@ -1,0 +1,37 @@
+name: larvitamintercom CI
+
+on: [push]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [14.x, 16.x]
+
+    steps:
+    - uses: getong/rabbitmq-action@v1.2
+      with:
+        rabbitmq version: 3-management
+        host port: 15672
+        rabbitmq user: 'admin'
+        rabbitmq password: 'Admin'
+        rabbitmq vhost: '/'
+    - uses: actions/checkout@v4
+    - name: Use Node.js ${{ matrix.node-version }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ matrix.node-version }}
+        cache: 'npm'
+    - run: echo '"amqp://admin:Admin@127.0.0.1:15672"' > ./config/amqp_test.json
+    - run: npm ci
+    - run: npm test
+
+
+  publish:
+    if: github.ref == 'refs/heads/master'
+    needs: test
+    uses: larvit/standards/.github/workflows/publish.yml@master
+    secrets:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

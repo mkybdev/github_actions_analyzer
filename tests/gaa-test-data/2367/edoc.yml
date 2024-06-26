@@ -1,0 +1,14 @@
+name: Docs
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: erlang:23
+    steps:
+      - name: Generate Documenation
+        run: rebar3 edoc

@@ -1,0 +1,82 @@
+# This workflow runs actions to pull, build, and run tacent unit tests.
+name: Unit Tests
+
+# Controls when the action will run. Triggers the workflow on push or pull request
+# events but only for the master branch
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # The Windows_CM_VS_VC job builds and runs unit tests on windows. CM = CMAKE. VS = VisualStudioGenerator. VC = MSVC Compiler.
+  Windows_CM_VS_VC:
+    # The type of runner that the job will run on
+    runs-on: windows-latest
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+    # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+    - uses: actions/checkout@v4
+
+    # msvc-dev-cmd needed so old gnu compiler not used. Want latest msvc on windows.
+    - uses: ilammy/msvc-dev-cmd@v1
+    - name: Build using CMake VS MSVC
+      run: |
+        echo '*** Configuring CMake ***'
+        mkdir build
+        cd build
+        cmake .. -DCMAKE_BUILD_TYPE=Release -G "Visual Studio 17 2022" -Ax64
+        # cmake .. -DCMAKE_BUILD_TYPE=Release -G "NMake Makefiles"
+        echo '*** CMake Build ***'
+        # nmake install
+        cmake --build . --config Release --target install
+        echo '*** Done Building ***'
+
+    - name: Unit Tests
+      run: |
+        echo 'Running Unit Tests'
+        cd build
+        cd TacentInstall
+        powershell ".\UnitTests.exe | tee Windows_TestResults.txt"
+        Write-Output "Exit Code: ${LASTEXITCODE}"
+        echo '*** Done Running Unit Tests ***'
+
+    - name: Unit Test Results
+      uses: actions/upload-artifact@v4
+      with:
+        name: unit_test_results_windows_CM_VS_VC
+        path: build/TacentInstall/Windows_TestResults.txt
+
+  # The Ubuntu_CM_NI_CL job buildsand tests tacent on ubuntu. CMake Ninja Clang
+  Ubuntu_CM_NI_CL:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Build Using CMake Ninja
+      run: |
+        echo '*** Configuring CMake ***'
+        sudo apt-get install ninja-build
+        mkdir build
+        cd build
+        cmake .. -GNinja -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=clang -DCMAKE_C_COMPILER=clang -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON
+        echo '*** CMake Build ***'
+        ninja -v install
+        echo '*** Done Building ***'
+
+    - name: Unit Tests
+      run: |
+        echo 'Running Unit Tests'
+        cd build
+        cd TacentInstall
+        set -o pipefail
+        ./UnitTests | tee Ubuntu_TestResults.txt ; echo Error Code $?
+        echo '*** Done Running Unit Tests ***'
+
+    - name: Unit Test Results
+      uses: actions/upload-artifact@v4
+      with:
+        name: unit_test_results_ubuntu_CM_NI_CL
+        path: build/TacentInstall/Ubuntu_TestResults.txt

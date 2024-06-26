@@ -1,0 +1,37 @@
+name: Build and deploy Jekyll site to webhost
+
+on:
+  push:
+    branches:
+    - main
+    - master
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: 3
+    - uses: limjh16/jekyll-action-ts@v2
+      with:
+        enable_cache: true
+        format_output: true
+    - name: check for broken links, etc
+      run: |
+        bundle exec htmlproofer ./_site --only-4xx --allow-hash-href
+      # allow failing
+      continue-on-error: true
+    - name: install sshpass
+      run: sudo apt-get install -y sshpass
+    - name: deploy to webhost
+      env:
+        SSH_HOST: ${{ secrets.WEBHOST_SSH_HOST }}
+        SSH_PASS: ${{ secrets.WEBHOST_SSH_PASSWORD }}
+        SSH_USER: ${{ secrets.WEBHOST_SSH_USER }}
+      run: |
+        set -eu
+        cd _site
+        echo "put ." | sshpass -p "$SSH_PASS" \
+          sftp -oBatchMode=no -oStrictHostKeyChecking=no -r "$SSH_USER@$SSH_HOST"

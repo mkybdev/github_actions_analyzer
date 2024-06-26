@@ -1,0 +1,46 @@
+name: automerge
+
+on:
+  pull_request:
+    paths:
+      - 'po/*.po'
+
+jobs:
+  automerge:
+    runs-on: ubuntu-latest
+    env:
+      MERGE_LABELS: ""
+      MERGE_METHOD: "rebase"
+      MERGE_COMMIT_MESSAGE: "pull-request-title-and-description"
+      UPDATE_LABELS: ""
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Check other source changes
+        uses: dorny/paths-filter@v3
+        id: src
+        with:
+          filters: |
+            changed:
+              - 'COPYING.GPLv2'
+              - 'README.md'
+              - 'setup.py'
+              - 'deploy/**'
+              - 'src/**'
+              - 'test/**'
+              - './.github/**'
+      - name: Install dependencies
+        if: steps.src.outputs.changed != 'true'
+        run: |
+          sudo apt install gettext
+      - name: Compile language files
+        if: steps.src.outputs.changed != 'true'
+        run: |
+          for i in $(ls -1 ./po/*po); do $(msgfmt "$i" -o "$i".mo); done
+          rm ./po/*.mo
+      - name: Automerge language file updates
+        if: steps.src.outputs.changed != 'true'
+        uses: "pascalgn/automerge-action@v0.13.1"
+        env:
+          GITHUB_TOKEN: "${{ secrets.GITHUB_TOKEN }}"

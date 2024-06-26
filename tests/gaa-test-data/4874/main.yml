@@ -1,0 +1,170 @@
+name: Build
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+
+jobs:
+
+  build-focal:
+
+    runs-on: ubuntu-20.04
+
+    strategy:
+      matrix:
+        gcc: [11, 7]
+
+    env:
+      BUILD_TYPE: Debug
+      CC: gcc-${{ matrix.gcc }}
+      CXX: g++-${{ matrix.gcc }}
+      CMAKE_BUILD_PARALLEL_LEVEL: 2
+
+    steps:
+    - uses: actions/checkout@v2
+    - uses: egor-tensin/setup-gcc@v1
+      with:
+        version: ${{ matrix.gcc }}
+        platform: x64
+
+    - name: Configure CMake
+      run: |
+        cmake -B ${{github.workspace}}/build \
+          -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} \
+          -DETL_BUILD_TESTS=ON \
+          -DETL_SANITIZE=ON
+
+    - name: Build
+      run: cmake --build ${{github.workspace}}/build
+
+    - name: Test
+      working-directory: ${{github.workspace}}/build
+      run: ./testEtl
+
+  build-latest:
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        build-type: [Debug, Release]
+
+    env:
+      BUILD_TYPE: ${{ matrix.build-type }}
+      CMAKE_BUILD_PARALLEL_LEVEL: 4
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Configure CMake
+      run: |
+        cmake -B ${{github.workspace}}/build \
+          -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} \
+          -DCMAKE_INSTALL_PREFIX=${{github.workspace}}/install \
+          -DETL_BUILD_TESTS=ON \
+          -DETL_COVERAGE=ON \
+          -DETL_SANITIZE=ON
+
+    - name: Build
+      run: cmake --build ${{github.workspace}}/build
+
+    - name: Install
+      run: cmake --install ${{github.workspace}}/build
+
+    - name: Test
+      working-directory: ${{github.workspace}}/build
+      run: ./testEtl
+
+    - name: Coverage
+      if: ${{ matrix.build-type == 'Release' }}
+      run: |
+        pip install gcovr
+        LINE_COV=$(./tools/coverage_val.sh -l build)
+        BRANCH_COV=$(./tools/coverage_val.sh -b build)
+        echo "line coverage: $LINE_COV%"
+        echo "branch coverage: $BRANCH_COV%"
+
+        STATUS_URL="https://api.github.com/repos/baltth/ETL/statuses/${COMMIT_SHA}"
+        curl --url "$STATUS_URL" \
+        --header 'authorization: Bearer ${{ secrets.GITHUB_TOKEN }}' \
+        --header 'content-type: application/json' \
+        -X POST \
+        --data "{\"state\":\"success\", \"description\":\"LC $LINE_COV% BC $BRANCH_COV%\", \"context\":\"coverage\"}"
+
+      env:
+        COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
+        PULL_NUMBER: ${{ github.event.pull_request.number }}
+        RUN_ID: ${{ github.run_id }}
+
+  build-clang:
+
+    env:
+      BUILD_TYPE: Release
+      CC: clang
+      CXX: clang++
+      CMAKE_BUILD_PARALLEL_LEVEL: 2
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - uses: egor-tensin/setup-clang@v1
+
+    - name: Configure CMake
+      run: |
+        cmake -B ${{github.workspace}}/build \
+          -DCMAKE_BUILD_TYPE=${{env.BUILD_TYPE}} \
+          -DETL_BUILD_TESTS=ON \
+          -DETL_SANITIZE=ON
+
+    - name: Build
+      run: cmake --build ${{github.workspace}}/build
+
+    - name: Test
+      working-directory: ${{github.workspace}}/build
+      run: ./testEtl
+
+  build-as-ep:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Configure CMake
+      run: |
+        cmake -DCMAKE_BUILD_TYPE=Release \
+          -DETL_VERSION=${{env.COMMIT_SHA}} \
+          -S ${{github.workspace}}/tests/ep-test/ \
+          -B ${{github.workspace}}/build-ep
+ 
+      env:
+        COMMIT_SHA: ${{ github.event.pull_request.head.sha }}
+
+    - name: Build
+      run: cmake --build ${{github.workspace}}/build-ep
+
+  build-alias:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Configure CMake
+      run: |
+        cmake -B ${{github.workspace}}/build \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_INSTALL_PREFIX=${{github.workspace}}/install \
+          -DETL_CUSTOM_NAMESPACE=Etl2 \
+          -DETL_CUSTOM_LIB_SUFFIX=etl2
+
+    - name: Build
+      run: cmake --build ${{github.workspace}}/build
+
+    - name: Install
+      run: cmake --install ${{github.workspace}}/build
+
+    - name: Check
+      run: nm -C ${{github.workspace}}/install/lib/libetl-etl2.a | grep Etl2

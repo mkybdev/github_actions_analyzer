@@ -1,0 +1,31 @@
+on:
+  push:
+    branches:
+      - master
+      # For previous major branches, like v2.x, v3.x, etc.
+      # If branch doesn't exist and you need a release on that major, create
+      # one from the latest tag for that major
+      - v*.x
+
+name: releaser
+jobs:
+  releaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: GoogleCloudPlatform/release-please-action@v1.6.3
+        id: release
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          release-type: node
+          package-name: restify-clients
+
+      - uses: actions/checkout@v2
+        if: ${{ steps.release.outputs.release_created }}
+      - uses: actions/setup-node@v1
+        with:
+          node-version: 14
+        if: ${{ steps.release.outputs.release_created }}
+      - run: npm i
+        if: ${{ steps.release.outputs.release_created }}
+      - run: npm publish --token=${{secrets.NPM_TOKEN}}
+        if: ${{ steps.release.outputs.release_created }}

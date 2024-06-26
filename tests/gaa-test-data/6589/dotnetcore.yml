@@ -1,0 +1,19 @@
+name: .NET Core
+
+on: [push]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v1
+    
+    - name: Setup .NET 6.0
+      uses: actions/setup-dotnet@v1.8.2
+      with:
+        dotnet-version: 6.0.100
+
+    - name: Build and Test with dotnet
+      run: NONET461=true dotnet test --configuration Release -v:m | grep -v 'NAME_UNKNOWN:Package'

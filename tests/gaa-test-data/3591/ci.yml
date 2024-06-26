@@ -1,0 +1,108 @@
+---
+name: 'CI'
+"on":
+  pull_request:
+  push:
+    branches:
+      - master
+      - 'feature/**'
+
+jobs:
+  yamllint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v3
+      - name: Run yaml Lint
+        uses: actionshub/yamllint@main
+
+  mdl:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v3
+      - name: Run Markdown Lint
+        uses: actionshub/markdownlint@main
+
+  cookstyle:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v3
+      - name: Install Chef
+        uses: actionshub/chef-install@main
+        env:
+          CHEF_LICENSE: accept-no-persis
+      - name: Run Cookstyle
+        run: chef exec cookstyle -D -E -f github
+        env:
+          CHEF_LICENSE: accept-no-persist
+      # - name: Upload cookstyle results
+      #   uses: actions/upload-artifact@v3
+      #  if: success() || failure()
+      #  with:
+      #    name: cookstyle-results
+      #    path: cookstyle.xml
+
+  kitchen:
+    runs-on: ubuntu-latest
+    needs:
+      - yamllint
+      - mdl
+      - cookstyle
+    strategy:
+      matrix:
+        os:
+          # - ubuntu-1404
+          - ubuntu-1604
+          - ubuntu-1804
+          - ubuntu-2004
+          - ubuntu-2204
+        suite:
+          # - default-chef13
+          - default-chef14
+          - default-chef15
+          - default-chef16
+          - default-chef17
+          - default-chef18
+          - custom-chef13
+          - custom-chef14
+          - custom-chef15
+          - custom-chef16
+          - custom-chef17
+          - custom-chef18
+          - disabled-chef13
+          - disabled-chef14
+          - disabled-chef15
+          - disabled-chef16
+          - disabled-chef17
+          - disabled-chef18
+      # include:
+      #   - os: ubuntu-2004
+      #     suite: openjdk-pkg-14
+      # exclude:
+      #   - os: debian-9
+      #     suite: openjdk-pkg-11
+      #   - os: debian-10
+      #     suite: openjdk-pkg-8
+      fail-fast: false
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v3
+      - name: Install Chef
+        uses: actionshub/chef-install@main
+      - name: Kitchen Tests
+        uses: actionshub/test-kitchen@main
+        env:
+          CHEF_LICENSE: accept-no-persist
+          KITCHEN_LOCAL_YAML: .kitchen.yml
+        with:
+          suite: ${{ matrix.suite }}
+          os: ${{ matrix.os }}
+      - name: Report
+        uses: actions/upload-artifact@v3
+        if: success() || failure()
+        with:
+          name: kitchen-results
+          path: kitchen-reports/*.xml
+          if-no-files-found: error

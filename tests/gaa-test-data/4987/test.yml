@@ -1,0 +1,19 @@
+on:
+  - push
+  - pull_request
+
+jobs:
+  must_pass:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: pipeline-components/shellcheck@v0.10.0
+        with:
+          directory: mush.sh test.sh
+      - name: Tests
+        shell: bash
+        run: |
+          curl -Lso- get.bpkg.sh | bash
+          ./mush.sh --help ## verify it runs and exits with 0
+          ./mush.sh --version ## verify it runs and exits with 0
+          bpkg run test

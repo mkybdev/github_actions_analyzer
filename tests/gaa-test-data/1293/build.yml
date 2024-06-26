@@ -1,0 +1,27 @@
+name: Build
+
+on:
+  push:
+    tags:
+      - v[0-9]+.[0-9]+.[0-9]+
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-node@v1
+        with:
+          node-version: '12'
+      - run: npm install
+      - run: npm test
+        env:
+          CI: true
+      - run: npm run build
+      - name: Get version
+        id: get_version
+        run: echo ::set-output name=VERSION::${GITHUB_REF#refs/*/}
+      - uses: actions/upload-artifact@v1
+        with:
+          name: JaSON-${{ steps.get_version.outputs.VERSION }}
+          path: build

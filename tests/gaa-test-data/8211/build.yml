@@ -1,0 +1,68 @@
+---
+name: Build & Deploy
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/erbium
+          cache: npm
+
+      - name: Build
+        run: >
+          make assets
+
+      - uses: isbang/compose-action@v2.0.1
+        with:
+          compose-file: |
+            ./.devcontainer/docker-compose.yaml
+            ./.devcontainer/docker-compose.ci.yaml
+          up-flags: "--abort-on-container-exit --exit-code-from=jekyll"
+          services: |-
+            jekyll
+            ws-screenshot
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: _site/
+          retention-days: 1
+          if-no-files-found: error
+
+  deployment:
+    if: ${{ github.ref == 'refs/heads/master' }}
+    runs-on: ubuntu-latest
+    environment: production
+    needs: [build]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: site
+          path: _site/
+
+      - name: Add SSH key
+        env:
+          SSH_AUTH_SOCK: /tmp/ssh_agent.sock
+        run: |
+          mkdir -p /home/runner/.ssh
+          ssh-keyscan cell.sanitarium.se >> /home/runner/.ssh/known_hosts
+          echo "${{ secrets.DEPLOY_SSH }}" > /home/runner/.ssh/github_actions
+          chmod 600 /home/runner/.ssh/github_actions
+          ssh-agent -a $SSH_AUTH_SOCK > /dev/null   
+          ssh-add /home/runner/.ssh/github_actions
+
+      - name: Deploy
+        env:
+          SSH_AUTH_SOCK: /tmp/ssh_agent.sock
+        run: make _deploy

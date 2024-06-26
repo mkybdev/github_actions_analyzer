@@ -1,0 +1,182 @@
+name: Master
+
+on:
+  push:
+    branches:
+    - master
+    paths-ignore:
+    - README.md
+
+env:
+  CoreVersion: 1.13.4
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    env:
+      Solution_Name: ContactPoint.sln
+      Configuration: Release
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v2
+      with:
+        fetch-depth: 0
+
+    - name: Setup NuGet
+      uses: nuget/setup-nuget@v1
+
+    - name: Install .NET Core
+      uses: actions/setup-dotnet@v1
+      with:
+        dotnet-version: 3.1.101
+        source-url: https://nuget.pkg.github.com/ipphone/index.json
+      env:
+        NUGET_AUTH_TOKEN: ${{secrets.GITHUB_TOKEN}}  
+
+    - name: Setup MSBuild.exe
+      uses: microsoft/setup-msbuild@v1.0.2
+
+    - name: Download signature key
+      run: |
+        [IO.File]::WriteAllBytes("SignatureKey.snk", [System.Convert]::FromBase64String("${{ secrets.CP_SIGNATURE_KEY }}"))
+
+    - name: Update CommonAssemnblyInfo.cs file
+      run: |
+        [System.IO.File]::WriteAllText("CommonAssemblyInfo.cs", [System.IO.File]::ReadAllText("CommonAssemblyInfo.cs").Replace("1.0.0", "$env:CoreVersion"))
+        [System.IO.File]::AppendAllText("CommonAssemblyInfo.cs", '[assembly: System.Reflection.AssemblyKeyFileAttribute(@"' + $env:GITHUB_WORKSPACE + '\SignatureKey.snk")]')
+        [System.IO.File]::AppendAllText("CommonAssemblyInfo.cs", '[assembly: AssemblyConfiguration("' + $env:Configuration + '")]')
+
+    - name: Update porject files to enable assembly signing
+      run: |
+        ForEach ($csproj_path in (ls *.csproj -Recurse -Exclude *Test*))
+        {
+          $csproj_content = Get-Content -path $csproj_path | ForEach {$_ -replace "</Project>", "<PropertyGroup><SignAssembly>true</SignAssembly><DelaySign>false</DelaySign></PropertyGroup></Project>"}
+          Set-Content -Path $csproj_path -Value $csproj_content -Force
+        }
+
+    - name: Set up JDK 11
+      uses: actions/setup-java@v1
+      with:
+        java-version: 1.11
+
+    - name: Cache SonarCloud packages
+      uses: actions/cache@v1
+      with:
+        path: ~\sonar\cache
+        key: ${{ runner.os }}-sonar
+        restore-keys: ${{ runner.os }}-sonar
+
+    - name: Cache SonarCloud scanner
+      id: cache-sonar-scanner
+      uses: actions/cache@v1
+      with:
+        path: .\.sonar\scanner
+        key: ${{ runner.os }}-sonar-scanner
+        restore-keys: ${{ runner.os }}-sonar-scanner
+
+    - name: Install SonarCloud scanner
+      if: steps.cache-sonar-scanner.outputs.cache-hit != 'true'
+      shell: powershell
+      run: |
+        New-Item -Path .\.sonar\scanner -ItemType Directory
+        dotnet tool update dotnet-sonarscanner --tool-path .\.sonar\scanner
+        
+    - name: Build application
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Needed to get PR information, if any
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      shell: powershell
+      run: |
+        .\.sonar\scanner\dotnet-sonarscanner begin /k:"ipphone_core" /o:"ipphone" /d:sonar.login="${{ secrets.SONAR_TOKEN }}" /d:sonar.host.url="https://sonarcloud.io"
+        msbuild $env:Solution_Name -t:Restore -p:Configuration=$env:Configuration
+        msbuild $env:Solution_Name -t:Build -p:Configuration=$env:Configuration
+        msbuild ContactPoint.Tests.WinForms\ContactPoint.Tests.WinForms.csproj -t:Build -p:Configuration=$env:Configuration
+        .\.sonar\scanner\dotnet-sonarscanner end /d:sonar.login="${{ secrets.SONAR_TOKEN }}"
+
+    - name: Remove signature key
+      if: always()
+      run: Remove-Item *.snk 
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v1.0.0
+      with:
+        name: Binaries
+        path: ../Binaries
+
+    - name: Setup github package repository
+      run: |
+        nuget sources add -name "github" -Source https://nuget.pkg.github.com/ipphone/index.json
+        nuget setapikey ${{ secrets.GITHUB_TOKEN }} -Source https://nuget.pkg.github.com/ipphone/index.json
+
+    - name: Build and Publish NuGet packages
+      run: |
+        ls *.nuspec |% { nuget pack $_ -Version $env:CoreVersion -Properties Configuration=$env:Configuration -OutputDirectory ..\out -BasePath ..\Binaries }
+        nuget push ..\out\*.nupkg -Source https://nuget.pkg.github.com/ipphone/index.json -SkipDuplicate
+
+  test:
+    runs-on: windows-latest
+    needs: build
+
+    steps:
+    - name: Setup NodeJS
+      uses: actions/setup-node@v1
+      with:
+        node-version: 12.x
+
+    - name: Setup Appium
+      run: npm install -g appium
+
+    - name: Download build artifacts
+      uses: actions/download-artifact@v1
+      with:
+        name: Binaries
+
+    - name: Execute unit tests
+      run: dotnet vstest Binaries\Tests\*.Test*.dll /ResultsDirectory:TestResults /Framework:".NETFramework,Version=v4.7.2" /Platform:x86 /logger:trx /Diag:TestResults\vstest_log.txt
+      env:
+        APP_ARGUMENTS: /loglevel 10 /log ..\TestResults\ipphone_log.txt
+        
+    - name: Upload test results
+      if: always()
+      uses: actions/upload-artifact@v1.0.0
+      with:
+        name: TestResults
+        path: TestResults
+
+    - name: Upload test results to CodeCov
+      if: always()
+      shell: bash
+      run: bash <(curl -s https://codecov.io/bash) -s ./TestResults
+      env:
+        CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  release:
+    runs-on: ubuntu-latest
+    environment: github
+    needs:
+    - build
+    - test
+
+    steps:
+    - name: Download build artifacts
+      uses: actions/download-artifact@v1
+      with:
+        name: Binaries
+
+    - name: Upload build artifacts to Azure Blob
+      uses: bacongobbler/azure-blob-storage-upload@v1.2.0
+      with:
+        connection_string: ${{ secrets.CP_AZURE_BLOB }}
+        container_name: ${{ format('build/v{0}', env.CoreVersion) }}
+        source_dir: ./Binaries
+
+    - name: Trigger Azure Release Pipeline
+      uses: alexrster/pipelines@v2
+      with:
+        azure-devops-project-url: 'https://dev.azure.com/qxzone/ContactPoint%20IP%20phone'
+        azure-pipeline-name: 'Release'
+        azure-pipeline-variables: '{ "cp.CoreVersion": "${{ env.CoreVersion }}" }'
+        azure-devops-token: '${{ secrets.AZURE_DEVOPS_TOKEN }}'
+ 

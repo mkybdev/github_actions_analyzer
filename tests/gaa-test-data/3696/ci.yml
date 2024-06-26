@@ -1,0 +1,113 @@
+name: Pyrollbar CI
+
+on:
+  push:
+    branches: [ master ]
+    tags: [ v* ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-20.04
+    strategy:
+      matrix:
+        python-version: [3.6, 3.7, 3.8, 3.9, '3.10', 3.11]
+        framework:
+          - FLASK_VERSION=1.1.4
+          - FLASK_VERSION=2.2.3
+          - DJANGO_VERSION=1.11.29
+          - DJANGO_VERSION=2.2.28
+          - DJANGO_VERSION=3.2.18
+          - DJANGO_VERSION=4.0.10
+          - DJANGO_VERSION=4.1.7
+          - TWISTED_VERSION=20.3.0
+          - TWISTED_VERSION=21.7.0
+          - TWISTED_VERSION=22.10.0
+          - PYRAMID_VERSION=1.10.8
+          - STARLETTE_VERSION=0.12.13 httpx==0.18.1 python-multipart==0.0.5
+          - STARLETTE_VERSION=0.14.2 httpx==0.18.1 python-multipart==0.0.5
+          - FASTAPI_VERSION=0.40.0 httpx==0.18.1 python-multipart==0.0.5
+          - FASTAPI_VERSION=0.50.0 httpx==0.18.1 python-multipart==0.0.5
+          - FASTAPI_VERSION=0.63.0 httpx==0.18.1 python-multipart==0.0.5
+        exclude:
+          # Test frameworks on the python versions they support, according to pypi registry
+          # Flask
+          - framework: FLASK_VERSION=2.2.3
+            python-version: 3.6
+
+          # Django
+          - framework: DJANGO_VERSION=1.11.29
+            python-version: 3.8
+          - framework: DJANGO_VERSION=1.11.29
+            python-version: 3.9
+          - framework: DJANGO_VERSION=1.11.29
+            python-version: '3.10'
+          - framework: DJANGO_VERSION=1.11.29
+            python-version: 3.11
+          - framework: DJANGO_VERSION=4.0.10
+            python-version: 3.6
+          - framework: DJANGO_VERSION=4.0.10
+            python-version: 3.7
+          - framework: DJANGO_VERSION=4.1.7
+            python-version: 3.5
+          - framework: DJANGO_VERSION=4.1.7
+            python-version: 3.6
+          - framework: DJANGO_VERSION=4.1.7
+            python-version: 3.7
+
+          # Twisted
+          - framework: TWISTED_VERSION=20.3.0
+            python-version: 3.11
+          - framework: TWISTED_VERSION=22.10.0
+            python-version: 3.6
+
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: recursive
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install Python 3.6 dependencies
+        if: ${{ contains(matrix.python-version, '3.6') }}
+        # typing-extensions dropped support for Python 3.6 in version 4.2
+        run: pip install "typing-extensions<4.2" requests==2.27.0 blinker==1.5 immutables==0.19
+
+      - name: Install Python 3.7 dependencies
+        if: ${{ contains(matrix.python-version, '3.7') }}
+        # immutables dropped support for Python<3.8 in version 0.20
+        run: pip install immutables==0.19
+
+      - name: Set the framework
+        run: echo ${{ matrix.framework }} >> $GITHUB_ENV
+
+      - name: Install Flask
+        if: ${{ contains(matrix.framework, 'FLASK_VERSION') }}
+        run: pip install Flask==$FLASK_VERSION
+
+      - name: Install Twisted
+        if: ${{ contains(matrix.framework, 'TWISTED_VERSION') }}
+        run: pip install Twisted==$TWISTED_VERSION idna==2.10
+
+      - name: Install Django
+        if: ${{ contains(matrix.framework, 'DJANGO_VERSION') }}
+        run: pip install Django==$DJANGO_VERSION
+
+      - name: Install Pyramid
+        if: ${{ contains(matrix.framework, 'PYRAMID_VERSION') }}
+        run: pip install pyramid==$PYRAMID_VERSION
+
+      - name: Install Starlette
+        if: ${{ contains(matrix.framework, 'STARLETTE_VERSION') }}
+        run: pip install starlette==$STARLETTE_VERSION
+
+      - name: Install FastAPI
+        if: ${{ contains(matrix.framework, 'FASTAPI_VERSION') }}
+        run: pip install fastapi==$FASTAPI_VERSION
+
+      - name: Run tests
+        run: python setup.py test

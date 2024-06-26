@@ -1,0 +1,54 @@
+name: Container Image Build Workflow
+
+on:
+  pull_request:
+    branches: [master]
+
+env:
+  REGISTRY_USER: ${{ github.actor }}
+  IMAGE_REGISTRY: ghcr.io/${{ github.repository_owner }}
+  REGISTRY_PASS: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  build:
+    name: Build and Push Buildah Image
+    runs-on: ubuntu-20.04
+
+    steps:
+      - name: Update Environment Image Name
+        id: update-env-image-name
+        uses: ASzc/change-string-case-action@v1
+        with:
+          string: SEPM-Project-TicTacToe-Game
+
+      - name: Update Environment Registry Name
+        id: update-env-registry-name
+        uses: ASzc/change-string-case-action@v1
+        with:
+          string: ${{ env.IMAGE_REGISTRY }}
+
+      - name: Checkout The Repository
+        uses: actions/checkout@v2
+
+      - name: Buildah Build Image
+        id: image-build
+        uses: redhat-actions/buildah-build@v2
+        with:
+          image: ${{ steps.update-env-image-name.outputs.lowercase }}
+          tags: latest ${{ github.run_number }}
+          dockerfiles: |
+            ./Dockerfile
+
+      - name: Login to Github Registry
+        uses: redhat-actions/podman-login@v1
+        with:
+          username: ${{ env.REGISTRY_USER }}
+          password: ${{ env.REGISTRY_PASS }}
+          registry: ${{ steps.update-env-registry-name.outputs.lowercase }}
+
+      - name: Push Container Image
+        uses: redhat-actions/push-to-registry@v2
+        with:
+          image: ${{ steps.image-build.outputs.image }}
+          tags: ${{ steps.image-build.outputs.tags }}
+          registry: ${{ steps.update-env-registry-name.outputs.lowercase }}

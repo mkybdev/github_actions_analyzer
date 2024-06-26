@@ -1,0 +1,37 @@
+name: "CI tests"
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  MT_COMPAT: true
+
+jobs:
+  tests:
+    if: ${{ github.repository == 'googleapis/gapic-generator-ruby' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.1"
+      - name: Checkout repo
+        uses: actions/checkout@v4
+      - name: Checkout submodules
+        run: |
+          git submodule set-url shared/googleapis https://github.com/googleapis/googleapis.git
+          git submodule set-url shared/gapic-showcase https://github.com/googleapis/gapic-showcase.git 
+          git submodule update --init --recursive
+      - name: Install dependencies
+        run: |
+          gem install --no-document toys
+          toys bundle install
+      - name: Run CI
+        run: |
+          toys ci --generator-only

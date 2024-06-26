@@ -1,0 +1,57 @@
+name: ci
+
+env:
+  CMAKE_BUILD_TYPE: Release
+
+on:
+  push:
+    paths:
+    - "**.py"
+    - .github/workflows/ci.yml
+
+jobs:
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions/setup-python@v2
+      with:
+        python-version: '3.x'
+
+    - run: pip install .[tests,lint]
+
+    - run: flake8
+    - run: mypy
+
+    - run: pytest
+
+
+  macos:
+    needs: linux
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions/setup-python@v2
+      with:
+        python-version: '3.x'
+
+    - run: pip install .[tests]
+
+    - run: pytest
+      env:
+        FC: gfortran-11
+        CC: gcc-11
+
+  windows:
+    needs: linux
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions/setup-python@v2
+      with:
+        python-version: '3.x'
+
+    - run: pip install -e .[tests]
+
+    - run: pytest

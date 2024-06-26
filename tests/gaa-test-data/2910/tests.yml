@@ -1,0 +1,66 @@
+name: Tests
+
+on:
+  - "push"
+  - "pull_request"
+
+jobs:
+  tests:
+
+    runs-on: ubuntu-latest
+    continue-on-error: "${{ matrix.php-versions == '8.2' || matrix.symfony == '^5.4' || matrix.symfony == '^6.0' }}"
+    strategy:
+      matrix:
+        php-versions: ['8.0', '8.1', '8.2']
+        symfony:
+          - '^4.4'
+          - '^5.0'
+          - '^5.1'
+          - '^5.2'
+          - '^5.3'
+          - '^5.4'
+          - '^6.0'
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: "Cache Composer packages"
+      id: "composer-cache"
+      uses: actions/cache@v2
+      with:
+        path: "vendor"
+        key: ${{ runner.os }}-php-${{ matrix.php-versions }}-${{ hashFiles('**/composer.lock') }}
+        restore-keys: |
+          "${{ runner.os }}-php-"
+
+    - name: "Setup PHP Action"
+      uses: "shivammathur/setup-php@v2"
+      with:
+        php-version: "${{ matrix.php-versions }}"
+        extensions: "intl, xdebug"
+
+    - name: "Adapt dependencies"
+      if: ${{ matrix.php-versions == '8.2' }}
+      run: composer config platform.php 8.0.99
+
+    - name: "Adapt dependencies"
+      if: ${{ matrix.symfony == '^5.4' || matrix.symfony == '^6.0' }}
+      run: composer config minimum-stability dev
+
+    - name: "Install dependencies"
+      run: |
+        composer require --dev --update-with-all-dependencies \
+          symfony/http-kernel:${{ matrix.symfony }} \
+          symfony/http-foundation:${{ matrix.symfony }} \
+          symfony/dependency-injection:${{ matrix.symfony }} \
+          symfony/config:${{ matrix.symfony }} \
+          symfony/twig-bundle:${{ matrix.symfony }}
+
+    - name: "Update to latest dependencies"
+      run: composer update
+
+    - name: "Unit + Integration"
+      run: vendor/bin/phpunit
+    
+    - name: "Mutation tests"
+      run: vendor/bin/infection --min-msi=100 --no-progress --threads=5

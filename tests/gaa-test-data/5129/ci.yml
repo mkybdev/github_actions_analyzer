@@ -1,0 +1,121 @@
+# https://docs.github.com/en/actions
+# https://github.com/codecov/example-python
+# https://stackoverflow.com/a/3237883
+# https://stackoverflow.com/a/5688592
+# https://stackoverflow.com/a/6270803
+# https://github.com/actions/virtual-environments/issues/1341
+
+name: CI
+
+on:
+  schedule:
+    - cron: '37 3 * * 0'
+  push:
+    branches:
+      - '**'
+  pull_request:
+    branches:
+      - '**'
+
+jobs:
+  enable-workflow:
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' || github.event_name == 'pull_request' || (github.event_name == 'schedule' && github.repository == 'apriha/lineage') }}
+    steps:
+      - name: Enable workflow based on preconditions
+        run: echo "Workflow enabled."
+
+  lint:
+    needs: [enable-workflow]
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Install Black
+      run: |
+        pip install black
+    - name: Lint with Black
+      run: |
+        black --check --diff .
+
+  build-docs:
+    needs: [enable-workflow]
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+    - name: Install Sphinx
+      run: |
+        pip install -r docs/requirements.txt
+        pip install .
+    - name: Build docs with Sphinx
+      run: |
+        sphinx-build -W --keep-going -T -E -D language=en docs docs/_build
+
+  test:
+    needs: [lint, build-docs]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest]
+        python-version: ['3.8', '3.9', '3.10', '3.11', '3.12']
+        include:
+          - os: macos-latest
+            python-version: '3.12'
+          - os: windows-latest
+            python-version: '3.12'
+
+    env:
+      JOB_ID: ${{ strategy.job-index }}
+      NUM_JOBS: ${{ strategy.job-total }}
+
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+        persist-credentials: false
+    - name: Setup Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python-version }}
+    - name: Determine if downloads are enabled for this job
+      # for testing, limit downloads from the resource servers to only the selected job for
+      # PRs and the master branch; note that the master branch is tested weekly via `cron`,
+      # so this ensures all Python versions will be periodically integration tested with the
+      # resource servers
+      if: ${{ github.event_name == 'pull_request' || github.ref == 'refs/heads/master' }}
+      shell: bash
+      run: |
+        SELECTED_JOB=$((10#$(date +%V) % $NUM_JOBS))
+        if [[ $SELECTED_JOB == $JOB_ID ]]; then
+          # set environment variable to download resources for selected job
+          echo "DOWNLOADS_ENABLED=true" >> $GITHUB_ENV
+        fi
+    - name: Install dependencies
+      run: |
+        pip install pytest-cov
+        pip install .
+    - name: Ensure Python and source code are on same drive (Windows)
+      if: ${{ matrix.os == 'windows-latest' }}
+      shell: cmd
+      run: |
+        mkdir C:\a
+        xcopy D:\a C:\a /s /e
+    - name: Test with pytest (Ubuntu & macOS)
+      if: ${{ matrix.os != 'windows-latest' }}
+      run: |
+        pytest --cov=lineage tests
+    - name: Test with pytest (Windows)
+      if: ${{ matrix.os == 'windows-latest' }}
+      working-directory: C:\a\lineage\lineage
+      run: |
+        pytest --cov=lineage tests
+    - name: Upload coverage to Codecov (Ubuntu & macOS)
+      if: ${{ matrix.os != 'windows-latest' }}
+      uses: codecov/codecov-action@v4.1.0
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}

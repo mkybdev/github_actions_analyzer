@@ -1,0 +1,31 @@
+name: Release
+
+on:
+  push:
+    tags: ['*']
+
+jobs:
+  alfred-snpt:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup go
+        uses: actions/setup-go@v3
+        with:
+          go-version-file: bin/go.mod
+          cache: false
+
+      - name: Setup project
+        run: make install
+
+      - name: Build project
+        run: make build
+
+      - name: Create release
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: build/snpt.alfredworkflow
+          token: ${{ secrets.DEPLOY_TOKEN }}

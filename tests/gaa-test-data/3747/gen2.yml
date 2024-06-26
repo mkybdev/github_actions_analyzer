@@ -1,0 +1,41 @@
+name: Site Generator 2
+
+on:
+  schedule:
+    # Once a week on Sunday
+    - cron:  '0 0 * * 0'
+  push:
+    branches:
+      - generator2
+
+jobs:
+  deploy:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: true  # Fetch Hugo themes (true OR recursive)
+          fetch-depth: 0    # Fetch all history for .GitInfo and .Lastmod
+
+      - uses: actions/setup-node@v2-beta
+        with:
+          node-version: '14'
+
+      - name: Install libs
+        run: npm install
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Generate data
+        run: npm run gen_data
+
+      - name: Build site
+        run: npm run build:p
+
+      - name: Deploy
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./public
+          publish_branch: master

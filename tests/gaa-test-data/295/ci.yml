@@ -1,0 +1,28 @@
+# CI workflow running the unit tests.
+name: CI
+
+on: [ push, pull_request ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # We need to use an OLS old enough to still have Python 2
+    container: ubuntu:18.04
+
+    steps:
+    - name: Set up
+      run: |
+        apt-get update -qq
+        apt-get install -qq default-jre git make python python-pip
+
+    - name: Check out
+      uses: actions/checkout@v3
+
+    - name: Install dependencies
+      run: |
+        pip install Sphinx
+        pip install pytest
+        pip install clint
+
+    - name: Run tests
+      run: make test

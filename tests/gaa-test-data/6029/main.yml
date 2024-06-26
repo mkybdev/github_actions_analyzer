@@ -1,0 +1,65 @@
+name: ci
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      matrix:
+        arch: [amd64, arm64, armhf]
+        target: [lib, exe, daemon, deb]
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ${{ github.workspace }}/.sccache-${{ matrix.arch }}
+          key: ${{ runner.os }}-${{ matrix.arch }}-${{ matrix.target }}-sccache
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Build
+        run: make TARGET=${{ matrix.arch }} ${{ matrix.target }}
+      - name: Fix cache permission
+        run: sudo chown -R $USER .sccache-${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        if: matrix.target == 'deb'
+        with:
+          name: sectora-${{ matrix.arch }}
+          path: ${{ github.workspace }}/target/*/debian/*.deb
+
+  set-dists:
+    runs-on: ubuntu-latest
+    outputs:
+      dists: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - id: set-matrix
+        run: |
+          content=$(curl -L https://raw.githubusercontent.com/yasuyuky/docker-ssh-test/main/dist.json | jq -c .)
+          echo matrix=${content} >>$GITHUB_OUTPUT
+          echo ${content}
+
+  test:
+    needs: [build, set-dists]
+    runs-on: ubuntu-latest
+    strategy:
+      matrix: ${{ fromJson(needs.set-dists.outputs.dists) }}
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: sectora-amd64
+          path: target
+      - name: Run tests
+        run: make test-deb-stub dist=${{ matrix.dist }} ver=${{ matrix.ver }}
+        working-directory: test
+        env:
+          TERM: xterm-256color

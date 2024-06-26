@@ -1,0 +1,28 @@
+name: Publish
+
+on:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  maven-publish:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v1
+    - name: set up JDK 11
+      uses: actions/setup-java@v1
+      with:
+        java-version: 11
+    - name: Build with Gradle
+      env:
+        ORG_GRADLE_PROJECT_mavenCentralRepositoryUsername: ${{ secrets.SONATYPE_NEXUS_USERNAME }}
+        ORG_GRADLE_PROJECT_mavenCentralRepositoryPassword: ${{ secrets.SONATYPE_NEXUS_PASSWORD }}
+        ORG_GRADLE_PROJECT_SIGNING_PRIVATE_KEY: ${{ secrets.PGP_SIGNING_PRIVATE_KEY }}
+        ORG_GRADLE_PROJECT_SIGNING_PASSWORD: ${{ secrets.PGP_SIGNING_PASSWORD }}
+      run: |
+        echo publish tag ${{ github.ref }}
+        ./gradlew publish --no-daemon --no-parallel
+        ./gradlew closeAndReleaseRepository --no-daemon --no-parallel

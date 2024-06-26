@@ -1,0 +1,44 @@
+name: Test on fedora:latest
+
+on: [push, pull_request]
+
+jobs:
+  # Test on fedora:latest with stock distro packages
+  test:
+    runs-on: ubuntu-latest
+    container:
+      image: fedora:latest
+
+    steps:
+    - name: Install base RPM packages
+      run: |
+        # glibc-langpacks-en needed to work around python locale issues
+        # git-core needed for codecov/codecov-action
+        dnf install -y \
+          git-core \
+          rpm-build \
+          dnf-plugins-core \
+          glibc-langpack-en \
+          python3-pytest python3-pytest-cov
+
+    - uses: actions/checkout@v4
+
+    - name: Install RPM build deps
+      run: |
+        dnf builddep -y ./virt-manager.spec
+
+    - name: Build RPM and test install
+      run: |
+        ./setup.py rpm
+        dnf install -y \
+          noarch/virt-install*.rpm \
+          noarch/virt-manager-common*.rpm
+
+    - name: Run test suite and generate coverage report
+      run: |
+        pytest --cov --cov-report=xml
+
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v4
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}

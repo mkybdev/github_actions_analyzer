@@ -1,0 +1,135 @@
+name: Build Android and WPF
+on:
+  push:
+    tags: 'v*'
+  workflow_dispatch:
+  pull_request:
+jobs:
+  Android:
+    runs-on: windows-latest
+    env:
+      SlnPathOriginal: src/
+      SlnPath: D:\a/xf/
+      AndroidCsprojPath: BDVideoLibraryManagerXF/BDVideoLibraryManagerXF.Android/
+      AndroidCsprojName: BDVideoLibraryManagerXF.Android.csproj
+      AndroidAppName: com.github.kurema.BDVideoLibraryManager
+      WPFCsprojPath: VideoLibraryManager/VideoLibraryManager.csproj
+    steps:
+    - uses: actions/checkout@v3
+# For Windows    
+    - name: Configure Pagefile
+      uses: al-cheb/configure-pagefile-action@v1.2
+      with:
+        minimum-size: 32GB
+        maximum-size: 32GB
+        disk-root: "C:"
+    - name: Add msbuild to PATH
+      uses: microsoft/setup-msbuild@v1.1
+    - name: Move directory
+      run: Move-Item ${{ env.SlnPathOriginal }} ${{env.SlnPath}}
+    - name: Write keystore
+      run: |
+        $pfx_cert_byte = [System.Convert]::FromBase64String("${{ secrets.KEYSTORE_BASE64_ENCODED }}")
+        [IO.File]::WriteAllBytes("${{ env.SlnPath }}${{ env.AndroidCsprojPath }}github.keystore", $pfx_cert_byte)
+    - name: Get tag
+      id: tag
+      if: contains(github.ref, 'tags/v')
+      uses: dawidd6/action-get-tag@v1
+    - name: Is tagged version
+      id: tagged
+      run: echo "tagged=yes" >> $GITHUB_OUTPUT
+      #https://pione30.hatenablog.com/entry/2021/02/05/015545
+      if: contains(github.ref, 'tags/v')
+    - name: Require Android package format
+      id: apf
+      shell: bash
+      run: |
+        if [ "${{steps.tagged.outputs.tagged}}" = "yes" ]; then
+          echo "format=aab" >> $GITHUB_OUTPUT
+        else
+          echo "format=apk" >> $GITHUB_OUTPUT
+        fi
+    - name: Android
+      run: |
+        cd ${{ env.SlnPath }}
+        nuget restore
+        msbuild ${{ env.AndroidCsprojPath }}${{ env.AndroidCsprojName }} /verbosity:normal /t:Rebuild /t:PackageForAndroid /t:SignAndroidPackage /p:Configuration=Release /p:AndroidKeyStore=True /p:AndroidSigningKeyStore=github.keystore /p:AndroidSigningStorePass=${{ secrets.KEYSTORE_PASSWORD }} /p:AndroidSigningKeyAlias=github /p:AndroidSigningKeyPass=${{ secrets.KEYSTORE_PASSWORD }} /p:AndroidPackageFormat=${{ steps.apf.outputs.format }} /p:AotAssemblies=true /p:EnableLLVM=true
+    - name: Build Apk version
+      run: |
+        cd ${{ env.SlnPath }}
+        msbuild ${{ env.AndroidCsprojPath }}${{ env.AndroidCsprojName }} /verbosity:quiet /t:Build /t:PackageForAndroid /t:SignAndroidPackage /p:Configuration=Release /p:AndroidKeyStore=True /p:AndroidSigningKeyStore=github.keystore /p:AndroidSigningStorePass=${{ secrets.KEYSTORE_PASSWORD }} /p:AndroidSigningKeyAlias=github /p:AndroidSigningKeyPass=${{ secrets.KEYSTORE_PASSWORD }} /p:AndroidPackageFormat=apk /p:AotAssemblies=true /p:EnableLLVM=true
+      if: contains(github.ref, 'tags/v')
+    - name: Delete keystore
+      run: |
+        rm ${{ env.SlnPath }}${{ env.AndroidCsprojPath }}github.keystore
+      if: always()
+    - name: Updload artifact Android
+      uses: actions/upload-artifact@v3
+      with:
+        name: Android App
+        path: ${{ env.SlnPath }}${{ env.AndroidCsprojPath }}bin/Release/${{ env.AndroidAppName }}-Signed.*
+      if: ${{ !contains(github.ref, 'tags/v') }}
+    - name: Create release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      if: contains(github.ref, 'tags/v')
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: ${{steps.tag.outputs.tag}}
+        draft: false
+        prerelease: false
+    - name: Update release asset
+      uses: actions/upload-release-asset@v1
+      if: contains(github.ref, 'tags/v')
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ${{ env.SlnPath }}${{ env.AndroidCsprojPath }}bin/Release/${{ env.AndroidAppName }}-Signed.aab
+        asset_name: ${{ env.AndroidAppName }}-Signed.aab
+        asset_content_type: application/zip
+    - name: Update release asset Apk
+      uses: actions/upload-release-asset@v1
+      if: contains(github.ref, 'tags/v')
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ${{ env.SlnPath }}${{ env.AndroidCsprojPath }}bin/Release/${{ env.AndroidAppName }}-Signed.apk
+        asset_name: ${{ env.AndroidAppName }}-Signed.apk
+        asset_content_type: application/zip
+    - name: Build WPF
+      run: |
+        cd ${{ env.SlnPath }}
+        nuget restore
+        dotnet publish ${{ env.WPFCsprojPath }} -c Release -o outputs\win\all
+        dotnet publish ${{ env.WPFCsprojPath }} -c Release -r win-x64 --self-contained false -p:PublishTrimmed=false -p:PublishSingleFile=true -p:PublishReadyToRun=true -o outputs\win\x64
+        dotnet publish ${{ env.WPFCsprojPath }} -c Release -r win-x86 --self-contained false -p:PublishTrimmed=false -p:PublishSingleFile=true -p:PublishReadyToRun=true -o outputs\win\x86
+        dotnet publish ${{ env.WPFCsprojPath }} -c Release -r win-arm64 --self-contained false -p:PublishTrimmed=false -p:PublishSingleFile=true -p:PublishReadyToRun=true -o outputs\win\arm64
+    - name: Archive packages
+      shell: pwsh
+      run: |
+        cd ${{ env.SlnPath }}
+        Compress-Archive -Path outputs\win -DestinationPath Win.zip
+    - name: Update Windows binary
+      uses: actions/upload-release-asset@v1
+      if: contains(github.ref, 'tags/v')
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ${{ env.SlnPath }}Win.zip
+        asset_name: Windows.zip
+        asset_content_type: application/zip
+    - name: Updload artifact WPF
+      uses: actions/upload-artifact@v3
+      with:
+        name: Windows App
+        path: ${{ env.SlnPath }}Win.zip
+      if: ${{ !contains(github.ref, 'tags/v') }}
+    - name: Delete moved directory
+      run: |
+        Remove-Item -Path ${{ env.SlnPath }}* -Recurse
+      if: always()

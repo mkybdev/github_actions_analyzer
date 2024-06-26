@@ -1,0 +1,35 @@
+name: shellcheck
+on: [push, pull_request]
+
+jobs:
+  shellcheck:
+    name: Shell Check
+    runs-on: ubuntu-latest
+    container:
+      image: opensuse/leap:15.3
+    steps:
+      - uses: actions/checkout@v1.2.0
+      - name: Update packages
+        run: zypper --non-interactive --gpg-auto-import-keys ref
+      - name: Install openSUSE dependencies
+        run: zypper --non-interactive --gpg-auto-import-keys install ShellCheck
+
+      - name: shellcheck
+        run: |
+          set -x
+          for i in $(find . -type f -name '*.sh'); do
+            shellcheck -s bash --exclude=SC2181 \
+                               --exclude=SC1090 \
+                               --exclude=SC2006 \
+                               --exclude=SC2086 \
+                               --exclude=SC2044 \
+                               --exclude=SC2045 \
+                               --exclude=SC2001 \
+                               --exclude=SC2162 \
+                               --exclude=SC2035 \
+                               --exclude=SC2034 \
+                               --exclude=SC2029 \
+                               --exclude=SC2062 \
+                               --exclude=SC2153 \
+                               $i
+          done

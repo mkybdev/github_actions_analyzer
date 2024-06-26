@@ -1,0 +1,28 @@
+on:
+  pull_request:
+  merge_group:
+
+name: Non executable checks
+
+jobs:
+  check-style:
+    name: Check style and headers
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get -y update
+      - run: sudo apt-get -y install clang-format git python3
+      - run: misc/fix-style --check
+      - run: misc/update-headers --check
+
+  clean-compilation:
+    name: Clean compilation
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get -y update
+      - run: sudo apt-get -y install build-essential mtools perl libxml-libxml-perl libxml-simple-perl libfile-copy-recursive-perl bc
+      - run: make configure
+      - run: (cd examples/mutexes && make CC="gcc -Wall -Wextra -Werror")
+      - run: (cd examples/semaphores && make CC="gcc -Wall -Wextra -Werror")
+      - run: (cd examples/events && make CC="gcc -Wall -Wextra -Werror")

@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+    - master
+
+jobs:
+  test:
+
+    runs-on: macOS-latest
+
+    steps:
+    - uses: actions/checkout@v1
+      
+    - name: Setup Emacs
+      uses: purcell/setup-emacs@master
+      with:
+        version: snapshot
+
+    - name: Setup Node
+      uses: actions/setup-node@v1
+      with:
+         node-version: '12.x'
+
+    - name: Symlink Emacs config
+      run: |
+        ln -s "$(pwd)" ~/.emacs.d
+
+    - name: Build
+      run: |
+        make install
+        make compile
+        
+    - name: Test Emacs startup
+      run: |
+        emacs --batch early-init.el init.el
+        
+    - name: Clean
+      run: |
+        make clean

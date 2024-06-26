@@ -1,0 +1,56 @@
+name: Java CI with Maven
+
+on:
+  push:
+    # dependabot will create both branches and pull request
+    # only run on pull requests to avoid running twice and creating a release draft
+    branches-ignore:
+      - 'dependabot/**'
+      - 'docs'
+  pull_request:
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '11'
+          cache: 'maven'
+      - name: Cache Maven Wrapper
+        uses: actions/cache@v4
+        with:
+          path: |
+            .mvn/wrapper/maven-wrapper.jar
+          key: ${{ runner.os }}-maven-wrapper-${{ hashFiles('**/maven-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-wrapper-
+      - uses: browser-actions/setup-firefox@v1
+      - name: Build with Maven
+        run: |
+          KEYCLOAK_VERSION=$(./mvnw help:evaluate -Dexpression=keycloak.version -q -DforceStdout)
+          docker run --name keycloak -v $(pwd)/keycloak-server-docker/keycloak-realm.json:/opt/keycloak/data/import/keycloak-realm.json -e KEYCLOAK_ADMIN=admin -e KEYCLOAK_ADMIN_PASSWORD=admin -d -p 8080:8080 quay.io/keycloak/keycloak:${KEYCLOAK_VERSION} start-dev --import-realm
+          docker ps
+          docker network ls
+          ./keycloak-server-docker/wait-for-docker.sh localhost 8080
+          docker logs keycloak
+          # set IP address to docker host in the default 'bridge' network
+          # this enables successful callbacks from the Keycloak server on logout
+          export HOSTNAME=172.17.0.1
+          ./mvnw -B test checkstyle:check
+      - name: failure reporting
+        if: ${{ failure() }}
+        run: |
+          docker logs keycloak
+      - name: publish
+        if: ${{ success() && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main') }}
+        env:
+          SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}
+          SONATYPE_USERNAME: ${{ secrets.SONATYPE_USERNAME }}
+        run: |
+          mvn deploy --settings cisettings.xml -DskipTests=true -B

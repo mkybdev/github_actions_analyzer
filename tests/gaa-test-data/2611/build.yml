@@ -1,0 +1,41 @@
+---
+name: Build
+'on':
+  push:
+    branches:
+    - main
+    tags:
+    - "**"
+  pull_request_target:
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+      with:
+        submodules: recursive
+    - name: Install AWS CLI
+      run: pip install --user awscli
+    - name: Install Hugo
+      env:
+        HUGO_VERSION: 0.125.6
+      run: |
+        curl -sLo ~/hugo.tar.gz "https://github.com/gohugoio/hugo/releases/download/v${HUGO_VERSION}/hugo_extended_${HUGO_VERSION}_Linux-64bit.tar.gz"
+        tar -xvzf ~/hugo.tar.gz -C ~/ hugo
+    - name: Build Blog
+      run: "~/hugo --panicOnWarning --cleanDestinationDir"
+    - name: Release
+      if: github.ref == 'refs/heads/main'
+      env:
+        AWS_ACCESS_KEY_ID: "${{ secrets.AWS_ACCESS_KEY_ID }}"
+        AWS_SECRET_ACCESS_KEY: "${{ secrets.AWS_SECRET_ACCESS_KEY }}"
+        AWS_DEFAULT_REGION: us-east-1
+      run: aws s3 sync --delete public/ s3://akerl-blog/
+    - name: Post to hook-exporter
+      run: "./.github/exporter.sh"
+      env:
+        EXPORTER_TOKEN: "${{ secrets.EXPORTER_TOKEN }}"
+        JOB_STATUS: "${{ job.status }}"
+      if: always() && github.ref == 'refs/heads/main'

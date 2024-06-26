@@ -1,0 +1,42 @@
+#
+# https://docs.github.com/en/actions
+# https://github.com/actions
+#
+
+name: CI
+on: [pull_request, push]
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.11"}
+      - run: python -m pip install tox wheel
+      - run: python -m tox -r -e lint -- --color=yes
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        pick:
+          - {OS: "ubuntu-latest", ARCH: "x64", PY: "3.8", CRYPTO: "31"}
+          - {OS: "ubuntu-latest", ARCH: "x64", PY: "3.9", CRYPTO: "32"}
+          - {OS: "ubuntu-latest", ARCH: "x64", PY: "3.10", CRYPTO: "34"}
+          - {OS: "ubuntu-latest", ARCH: "x64", PY: "3.11", CRYPTO: "40"}
+          - {OS: "ubuntu-latest", ARCH: "x64", PY: "3.12", CRYPTO: "41"}
+          - {OS: "ubuntu-latest", ARCH: "x64", PY: "3.12", CRYPTO: "42"}
+          - {OS: "windows-latest", ARCH: "x86", PY: "3.12", CRYPTO: "42"}
+          - {OS: "windows-latest", ARCH: "x64", PY: "3.12", CRYPTO: "42"}
+          - {OS: "macos-latest", ARCH: "x64", PY: "3.12", CRYPTO: "42"}
+    runs-on: "${{matrix.pick.OS}}"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "${{matrix.pick.PY}}"
+          architecture: "${{matrix.pick.ARCH}}"
+      - run: python -m pip install tox wheel
+      - run: python -m tox -r -- --color=yes
+        env:
+          TOXENV: "py3-cryptography${{matrix.pick.CRYPTO}}"
+

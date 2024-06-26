@@ -1,0 +1,62 @@
+# deploy hexo blog to aliyun oss
+
+name: Deploy Blog
+
+# Controls when the action will run. Triggers the workflow on push or pull request
+# events but only for the master branch
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  build:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+
+      # Runs a single command using the runners shell
+      - name: Run a one-line script
+        run: echo Hello, world!
+
+      - name: Install dependencies
+        run: |
+          npm i -g hexo-cli
+          npm i
+          hexo version
+      - name: Run a multi-line script
+        run: |
+          hexo generate
+          ls -l public
+      - name: config ossutil
+        uses: manyuanrong/setup-ossutil@v2.0
+        with:
+          endpoint: ${{ secrets.ALIYUN_OSS_ENDPOINT }}
+          access-key-id: ${{ secrets.ALIYUN_OSS_KEY_ID }}
+          access-key-secret: ${{ secrets.ALIYUN_OSS_KEY_SECRET }}
+
+      - name: upload to oss
+        run: |
+          ossutil rm oss://chengchaoblog/ -a -r -f
+          ossutil cp public oss://chengchaoblog -r -f
+      - name: notify to dingding
+        run: |
+          curl --location --request POST 'https://oapi.dingtalk.com/robot/send?access_token=${{ secrets.dingding_access_token }}' \
+          --header 'Content-Type: application/json' \
+          --data-raw '{
+              "msgtype": "markdown",
+              "markdown": {
+                  "title": "Blog Deploy",
+                  "text": "### Blog Deploy \n\n-----------------   \n\n **message:** ${{ github.event.head_commit.message }}  \n\n **author:** ${{ github.actor }}"
+              }
+          }'

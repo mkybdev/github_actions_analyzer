@@ -1,0 +1,66 @@
+name: Raspbian
+
+on:
+  push:
+    branches:
+      - main
+      - 'releases/**'
+    tags:
+      - v*
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  build:
+    name: Cross build for raspbian / ${{ matrix.debian-version }}
+
+    # docker executor
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        debian-version: [bullseye]
+
+    container:
+      image: debian:${{ matrix.debian-version }}-slim
+      env:
+        DEBIAN_FRONTEND: noninteractive
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install build dependencies for Linux daemon 'callblockerd'
+      run: |
+        dpkg --add-architecture armhf
+        apt-get update
+        apt-get install --no-install-recommends -y \
+          debhelper build-essential crossbuild-essential-armhf \
+          ca-certificates wget \
+          dpkg-dev pkg-config \
+          python3-pip python3-setuptools \
+          ninja-build meson \
+          g++-arm-linux-gnueabihf gcc-arm-linux-gnueabihf \
+          libjson-c-dev:armhf libphonenumber-dev:armhf uuid-dev:armhf libssl-dev:armhf
+        meson -v
+
+    - name: Install build dependencies for web-interface
+      run: |
+        wget -qO- https://deb.nodesource.com/setup_16.x | bash -
+        apt-get update
+        apt-get install --no-install-recommends -y \
+          nodejs
+
+    - name: Build package
+      run: |
+        export CONFIG_SITE=/etc/dpkg-cross/cross-config.armhf
+        dpkg-buildpackage -b -uc -a armhf -d
+        mkdir -p artifacts
+        cp ../callblocker_* artifacts
+
+    - name: Archive Raspbian package artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: raspbian_${{ matrix.debian-version }}
+        path: artifacts
+

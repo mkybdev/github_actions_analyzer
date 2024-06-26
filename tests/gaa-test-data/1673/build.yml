@@ -1,0 +1,126 @@
+name: Build
+
+on:
+  - push
+
+jobs:
+  build:
+    name: "Build - java = ${{ matrix.java }} - node = ${{ matrix.node }}"
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        java:
+          - "21"
+        node:
+          - "20"
+
+      fail-fast: true
+
+    env:
+      GRADLE_OPTS: "-Dorg.gradle.caching=false -Dorg.gradle.daemon=false"
+      DOCKER_USERNAME: pgentile
+      CYPRESS_CACHE_FOLDER: ~/.cache/Cypress
+      DEFAULT_JAVA_VERSION: "21"
+      DEFAULT_NODE_VERSION: "20"
+
+    steps:
+      - name: About env
+        run: |
+          echo "Env"
+          export
+          echo
+          echo "Github Action vars"
+          echo "github.ref = ${{ github.ref  }}"
+          echo "matrix.java = ${{ matrix.java }}"
+          echo "matrix.node = ${{ matrix.node }}"
+
+      - name: Checkout
+        uses: actions/checkout@0ad4b8fadaa221de15dcec353f45205ec38ea70b # v4
+
+      - name: Cypress cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CYPRESS_CACHE_FOLDER }}
+          key: ${{ runner.os }}-cypress-${{ hashFiles('zucchini-ui-e2e-tests/yarn.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cypress-
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          java-version: ${{ matrix.java }}
+          distribution: temurin
+          check-latest: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          check-latest: true
+          cache: yarn
+          cache-dependency-path: '**/yarn.lock'
+
+      - name: Check Gradle
+        uses: gradle/wrapper-validation-action@v3
+
+      - name: Setup Gradle
+        uses: gradle/gradle-build-action@v3
+
+      - name: Install JS dependencies
+        run: ./gradlew yarnInstall
+
+      - name: Assemble project
+        run: ./gradlew assemble
+
+      - name: Test and check project
+        run: ./gradlew check
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ env.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        run: ./gradlew dockerBuild
+
+      - name: Start server with Docker
+        run: ./gradlew dockerComposeUp
+
+      - name: Run Cypress tests
+        uses: cypress-io/github-action@v4
+        if: matrix.java == env.DEFAULT_JAVA_VERSION
+        with:
+          working-directory: ./zucchini-ui-e2e-tests
+          # Already installed
+          install: false
+          record: true
+        env:
+          CYPRESS_RECORD_KEY: ${{ secrets.CYPRESS_RECORD_KEY }}
+          # pass GitHub token to allow accurately detecting a build vs a re-run build
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Collect Cypress videos
+        uses: actions/upload-artifact@v4
+        if: always() && matrix.java == env.DEFAULT_JAVA_VERSION
+        with:
+          name: Cypress videos for Java ${{ matrix.java }}
+          path: ./zucchini-ui-e2e-tests/cypress/videos
+
+      - name: JUnit Report Action
+        uses: mikepenz/action-junit-report@v4
+        if: always()
+        with:
+          report_paths: '**/test-results/**/TEST-*.xml'
+
+      - name: Push Docker image
+        if: github.ref == 'refs/heads/master' && matrix.java == env.DEFAULT_JAVA_VERSION && matrix.node == env.DEFAULT_NODE_VERSION
+        run: ./gradlew dockerPush

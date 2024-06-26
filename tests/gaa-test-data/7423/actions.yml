@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+jobs:
+  tests:
+    name: Test with Ruby ${{ matrix.ruby-version }} and ${{ matrix.gemfile }}
+    runs-on: ubuntu-20.04
+    services:
+      redis:
+        image: redis:7.0.5
+        ports:
+          - 6379:6379
+    strategy:
+      matrix:
+        ruby-version:
+          - "2.6"
+          - "2.7"
+          - "3.2"
+          - "3.3"
+        gemfile:
+          - "redis4"
+          - "redis5"
+
+    env:
+      BUNDLE_GEMFILE: gemfiles/${{ matrix.gemfile }}.gemfile
+
+    steps:
+      - uses: zendesk/checkout@v3
+      - uses: zendesk/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby-version }}
+          bundler-cache: true
+      - name: rake test
+        run: bundle exec rake test
+        env:
+          REDIS_URL: 'redis://localhost:6379'
+
+  tests_successful:
+    name: Tests passing?
+    needs: tests
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          if ${{ needs.tests.result == 'success' }}
+          then
+            echo "All tests pass"
+          else
+            echo "Some tests failed"
+            false
+          fi

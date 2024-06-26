@@ -1,0 +1,27 @@
+name: Build policies
+on:
+  - pull_request
+  - push
+jobs:
+  centos:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        container:
+          - "docker.io/almalinux:8"
+          - "docker.io/almalinux:9"
+          - "quay.io/centos/centos:stream9"
+    container:
+      image: ${{ matrix.container }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install packages
+        run: yum install -y selinux-policy-devel policycoreutils bzip2 perl-podlators
+
+      - name: Build policies
+        run: make all
+
+      - name: Check syntax of shell scripts
+        run: bash -n *-relabel *-enable *-disable

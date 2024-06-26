@@ -1,0 +1,39 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+  schedule:
+    - cron: '0 0 7 * *'  # run tests every month just to check for funny business if things are quiet
+
+jobs:
+  test:
+    name: Test with ${{ matrix.emacs_version }}
+    runs-on: ubuntu-18.04
+    strategy:
+      matrix:
+        emacs_version: [emacs25, emacs26]
+    
+    steps:
+    - uses: actions/checkout@v1
+    - uses: actions/setup-python@v1
+      with:
+        python-version: '3.x'
+    - name: Install and setup preliminary tools
+      run: |
+        sudo add-apt-repository ppa:kelleyk/emacs
+        sudo apt update
+        sudo apt install -y ${{ matrix.emacs_version }}
+        pip install virtualenv
+        curl -fsSkL https://raw.github.com/cask/cask/master/go | python
+        export PATH="~/.cask/bin:$PATH"
+        cask exec emacs --version
+    - name: Install emacs deps and run tests with cask
+      run: |
+        export PATH="~/.cask/bin:$PATH"
+        cask install
+        cask exec ert-runner

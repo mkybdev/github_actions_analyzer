@@ -1,0 +1,43 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  run_test:
+    runs-on: ubuntu-latest
+    env:
+      CC: clang
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+        with:
+          submodules: recursive
+      - name: Checkout vn3d
+        uses: actions/checkout@v2
+        with:
+          repository: shamazmazum/vn3d
+          path: vn3d
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@v1
+        with:
+          version: "15.0"
+          directory: llvm
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install cmake liblua5.3-dev libiniparser-dev
+          sudo apt-get install libsdl2-dev libcunit1-dev libblocksruntime-dev
+          sudo apt-get install libdispatch-dev
+      - name: Install dependencies (2)
+        run: |
+          mkdir -p $GITHUB_WORKSPACE/vn3d/build && cd $GITHUB_WORKSPACE/vn3d/build
+          cmake -DCMAKE_INSTALL_PREFIX=/usr .. && make && sudo make install
+      - name: Configure
+        run: |
+          mkdir $GITHUB_WORKSPACE/build && cd $GITHUB_WORKSPACE/build
+          cmake -DCMAKE_BUILD_TYPE=RELEASE $GITHUB_WORKSPACE
+      - name: Build
+        run: |
+          cd $GITHUB_WORKSPACE/build
+          make
+          sudo make install

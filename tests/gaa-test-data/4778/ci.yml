@@ -1,0 +1,50 @@
+name: CI
+on: [push, pull_request]
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        jdk: ['adopt:1.8']
+        scala: ['2.12', '2.13', '3']
+        include:
+          - scala: '2.12'
+            scala-version: 2.12.19
+          - scala: '2.13'
+            scala-version: 2.13.14
+          - scala: '3'
+            scala-version: 3.4.2
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Scala
+        uses: coursier/setup-action@v1
+        with:
+          jvm: ${{ matrix.jdk }}
+
+      - name: Compile
+        run: sbt coverage "++${{ matrix.scala-version }} compile"
+
+      - name: Run tests
+        run: sbt coverage "++${{ matrix.scala-version }} test"
+
+      - name: Upload coverage data to Coveralls
+        run: sbt ++${{ matrix.scala-version }} coverageAggregate coveralls
+        env:
+          COVERALLS_REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COVERALLS_FLAG_NAME: Scala ${{ matrix.scala }}
+
+      - name: Check formatting
+        run: git diff --exit-code
+
+      - name: Publish snapshot version
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        run: sbt ++${{ matrix.scala-version }} publish
+        env:
+          SONATYPE_USERNAME: ruippeixotog
+          SONATYPE_PASSWORD: ${{ secrets.SONATYPE_PASSWORD }}

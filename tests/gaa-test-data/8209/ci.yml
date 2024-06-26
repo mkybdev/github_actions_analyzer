@@ -1,0 +1,62 @@
+name: CI
+
+on: [push]
+
+jobs:
+  changesets:
+    name: Changesets
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v1
+        with:
+          node-version: 14
+
+      - name: Install Dependencies
+        uses: bahmutov/npm-install@v1
+
+      - name: Check Changeset Status
+        run: |
+          git pull -f --ff-only origin master:master
+          npx changeset status --since=master
+
+  jest:
+    name: Jest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v1
+        with:
+          node-version: 14
+
+      - name: Install Dependencies
+        uses: bahmutov/npm-install@v1
+
+      - name: Run Jest
+        run: npx jest --ci
+
+  prettier:
+    name: Prettier
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v1
+        with:
+          node-version: 14
+
+      - name: Install Dependencies
+        uses: bahmutov/npm-install@v1
+
+      - name: Run Prettier Check
+        run: npx prettier . --check

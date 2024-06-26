@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+
+env:
+  FORCE_COLOR: 1
+
+jobs:
+  test:
+    name: test w/ Python ${{ matrix.python-version }}
+
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.7", "3.8", "3.9", "3.10", "3.10-dev", "3.11-dev"]
+        include:
+          - { python-version: "3.7", nox-python-version: "3.7" }
+          - { python-version: "3.8", nox-python-version: "3.8" }
+          - { python-version: "3.9", nox-python-version: "3.9" }
+          - { python-version: "3.10", nox-python-version: "3.10" }
+          - { python-version: "3.10-dev", nox-python-version: "3.10" }
+          - { python-version: "3.11-dev", nox-python-version: "3.11" }
+
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+      - uses: actions/setup-python@v4
+        if: "!endsWith(matrix.python-version, '-dev')"
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: deadsnakes/action@v2.1.1
+        if: endsWith(matrix.python-version, '-dev')
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install nox
+      - run: nox --session tests-${{ matrix.nox-python-version }}
+        env:
+          PYTHONDEVMODE: 1
+      - uses: codecov/codecov-action@v3
+        if: always()
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          file: ./coverage.xml
+
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('pyproject.toml') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+      - uses: actions/setup-python@v3
+        with:
+          python-version: "3.10"
+      - run: pip install nox
+      - run: nox --session lint

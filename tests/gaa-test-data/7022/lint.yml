@@ -1,0 +1,37 @@
+---
+name: Lint
+
+on:
+  pull_request:
+    branches: [ master ]
+    paths:
+      - '**.rb'
+      - '**.yml'
+      - '.github/workflows/lint.yml'
+      - '!bin/**'
+
+env:
+  RUBY_YJIT_ENABLE: 1
+
+jobs:
+  lint:
+    name: Ruby & YAML
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.2'
+          bundler-cache: true
+
+      - name: Run Standard Ruby linter
+        run: bin/standardrb --no-fix --fail-fast
+
+      - name: Run Yaml linter
+        run: |
+          sudo apt-get install --fix-missing -qq --no-install-recommends yamllint
+          yamllint ./

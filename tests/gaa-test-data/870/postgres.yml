@@ -1,0 +1,98 @@
+name: Tests - PostgreSQL
+
+on: [pull_request]
+
+jobs:
+  postgresql:
+    runs-on: ubuntu-20.04
+
+    services:
+      # Postgres installation
+      db:
+        image: postgres
+        env:
+          # Latest version of Postgres has increased security. We can use the default
+          # user/password in this testing scenario though so use the following env
+          # variable to bypass this changes:
+          # https://github.com/docker-library/postgres/issues/681
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    # Define environment variables for Postgres and Rails
+    env:
+      RAILS_ENV: test
+      DATABASE_URL: postgres://postgres:@localhost:5432/roadmap_test
+
+    steps:
+    # Checkout the repo
+    - uses: actions/checkout@v3
+
+    # Install Ruby and run bundler
+    - uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.0'
+        bundler-cache: true
+
+    ## - run: echo 'NODE_OPTIONS="--openssl-legacy-provider"' >> $GITHUB_ENV
+    ## /home/runner/runners/2.301.1/externals/node12/bin/node: --openssl-legacy-provider is not allowed in NODE_OPTIONS
+
+    # Install Node
+    - uses: actions/setup-node@v3
+      with:
+        node-version: 18
+        cache: 'yarn'
+
+    # Install the Postgres developer packages
+    - name: 'Install Postgresql Packages'
+      run: |
+        sudo apt-get update
+        sudo apt-get install libpq-dev
+
+    # Copy all of the example configs over
+    - name: 'Setup Default Configuration'
+      run: |
+        cp config/database.yml.sample config/database.yml
+        cp config/initializers/contact_us.rb.example config/initializers/contact_us.rb
+        cp config/initializers/wicked_pdf.rb.example config/initializers/wicked_pdf.rb
+        cp .env.postgresql .env
+
+    # Stub out the Rails credentials file so that we can start the Rails app
+    - name: 'Setup Credentials'
+      run: |
+        # generate a default credential file and key
+        EDITOR='echo "$(cat config/credentials.yml.postgresql)" >' bundle exec rails credentials:edit
+
+    # Set the path to the wkhtmltopdf executable
+    - name: 'Determine wkhtmltopdf location'
+      run: echo "WICKED_PDF_PATH=`bundle exec which wkhtmltopdf`" >> $GITHUB_ENV
+
+    # Run yarn install for JS dependencies
+    - name: 'Yarn Install'
+      run: |
+        yarn install
+
+    # Initialize the DB
+    - name: 'Setup Test DB'
+      run: |
+        bundle exec rails db:setup RAILS_ENV=test
+        bundle exec rails db:migrate RAILS_ENV=test
+
+    # Prebuild the CSS, JS and image assets
+    - name: 'Compile Assets'
+      run: bundle exec rails assets:precompile
+
+    # Run  the unit and functional tests
+    - name: 'Run Rspec Unit and Functional Tests'
+      run: |
+        bundle exec rspec spec/models/ spec/policies/ spec/services/ spec/helpers/
+        bundle exec rspec spec/controllers/ spec/presenters/ spec/requests/ spec/views
+        bundle exec rspec spec/mixins/
+
+    # Run the time consuming integration tests (using Chrome headless browser)
+    - name: 'Run Integration Tests'
+      run: bundle exec rspec spec/features/

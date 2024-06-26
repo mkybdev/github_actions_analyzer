@@ -1,0 +1,52 @@
+name: Unit Tests Ubuntu
+
+on: [ push ]
+
+jobs:
+  build:
+    name: ${{ matrix.compiler_name }}
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        compiler_name: [build_gcc9, build_gcc10, build_clang10, build_clang11, build_clang12]
+        include:
+          - compiler_name: build_gcc9
+            c_compiler: gcc-9
+            cxx_compiler: g++-9
+
+          - compiler_name: build_gcc10
+            c_compiler: gcc-10
+            cxx_compiler: g++-10
+
+          - compiler_name: build_clang10
+            c_compiler: clang-10
+            cxx_compiler: clang++-10
+
+          - compiler_name: build_clang11
+            c_compiler: clang-11
+            cxx_compiler: clang++-11
+
+          - compiler_name: build_clang12
+            c_compiler: clang-12
+            cxx_compiler: clang++-12
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: cmake
+        run: cmake -DCMAKE_BUILD_TYPE=Debug -DENABLE_UNIT_TESTS=TRUE  -G "CodeBlocks - Unix Makefiles" -DCMAKE_C_COMPILER=${{ matrix.c_compiler }} -DCMAKE_CXX_COMPILER=${{ matrix.cxx_compiler }} -S ./source
+
+      - name: build
+        run: cmake --build ./
+
+      - name: unit-tests
+        run: ./unittests
+        
+      - name: cmake-utils
+        run: cmake -DCMAKE_BUILD_TYPE=Debug -DENABLE_UNIT_TESTS=TRUE  -G "CodeBlocks - Unix Makefiles" -DCMAKE_C_COMPILER=${{ matrix.c_compiler }} -DCMAKE_CXX_COMPILER=${{ matrix.cxx_compiler }} -S ./utils -B ./utils
+
+      - name: build-utils
+        run: cmake --build ./utils
+        
+      - name: unit-tests-utils
+        run: ./utils/differtests

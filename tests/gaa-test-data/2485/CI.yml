@@ -1,0 +1,79 @@
+name: GitHub CI
+
+on:
+  push:
+    paths-ignore:
+      - '.gitattributes'
+      - '.github/*'
+      - '.github/*_TEMPLATE/**'
+      - '.gitignore'
+      - '*.bat'
+      - '*.yml'
+      - 'doc/**'
+  pull_request:
+    paths-ignore:
+      - '.gitattributes'
+      - '.github/*'
+      - '.github/*_TEMPLATE/**'
+      - '.gitignore'
+      - '*.bat'
+      - '*.yml'
+      - 'doc/**'
+
+jobs:
+  build-windows:
+    name: Build (Windows, ${{ matrix.configuration }}, VS${{ matrix.vsver }}) # runner.os doesn't work here
+    runs-on: windows-${{ matrix.vsver }}
+    env:
+      POWERSHELL_TELEMETRY_OPTOUT: 1
+    strategy:
+      fail-fast: false
+      matrix:
+        configuration: [Release, Debug]
+        vsver: [2022]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Generate CMake files
+        run: cmake -B build -A Win32
+      - name: Build
+        run: cmake --build build --config ${{ matrix.configuration }} -j $env:NUMBER_OF_PROCESSORS
+      - name: Prepare artifacts
+        if: matrix.configuration == 'Release'
+        run: cmake --install build --config ${{ matrix.configuration }} --prefix artifacts
+      - uses: actions/upload-artifact@v3
+        if: matrix.configuration == 'Release'
+        with:
+          name: CxbxReloaded-${{ matrix.configuration }}-VS${{ matrix.vsver }}
+          path: artifacts/bin
+          if-no-files-found: error
+
+  release:
+    if: |
+      github.event.action != 'pull_request' &&
+      github.ref == 'refs/heads/master'     &&
+      github.repository == 'Cxbx-Reloaded/Cxbx-Reloaded'
+    needs: build-windows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: artifacts
+      - name: Re-zip artifacts
+        id: zip
+        run: |
+          for artifact in artifacts/*; do
+            7z a ${artifact}.zip "./${artifact}/*"
+            if [ $(stat -c %s ${artifact}.zip) -le 100000 ]; then
+              echo "Error: Archive ${artifact}.zip too small!"
+              exit 1
+            fi
+          done
+          echo "tag_name=CI-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - name: Create Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create ${{ steps.zip.outputs.tag_name }} artifacts/*.zip -p --target $GITHUB_SHA --title '${{ steps.zip.outputs.tag_name }}'

@@ -1,0 +1,81 @@
+---
+name: ci
+
+"on":
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  lint-unit:
+    uses: sous-chefs/.github/.github/workflows/lint-unit.yml@3.1.1
+    permissions:
+      actions: write
+      checks: write
+      pull-requests: write
+      statuses: write
+      issues: write
+
+  integration:
+    needs: lint-unit
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os:
+          - almalinux-8
+          - almalinux-9
+          - centos-stream-8
+          - centos-stream-9
+          - debian-11
+          - debian-12
+          - rockylinux-8
+          - rockylinux-9
+          - ubuntu-2004
+          - ubuntu-2204
+          - ubuntu-2404
+        suite:
+          - resource
+          - resource-community
+          - resource-peclchannel
+      fail-fast: false
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4 # v4
+      - name: Install Chef
+        uses: actionshub/chef-install@3.0.0
+      - name: Dokken
+        uses: actionshub/test-kitchen@3.0.0
+        env:
+          CHEF_LICENSE: accept-no-persist
+          KITCHEN_LOCAL_YAML: kitchen.dokken.yml
+        with:
+          suite: ${{ matrix.suite }}
+          os: ${{ matrix.os }}
+
+  integration-amazonlinux:
+    needs: lint-unit
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        os:
+          - amazonlinux-2023
+        suite:
+          - resource
+          - resource-peclchannel
+      fail-fast: false
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4 # v4
+      - name: Install Chef
+        uses: actionshub/chef-install@3.0.0
+      - name: Dokken
+        uses: actionshub/test-kitchen@3.0.0
+        env:
+          CHEF_LICENSE: accept-no-persist
+          KITCHEN_LOCAL_YAML: kitchen.dokken.yml
+        with:
+          suite: ${{ matrix.suite }}
+          os: ${{ matrix.os }}

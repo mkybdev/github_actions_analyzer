@@ -1,0 +1,87 @@
+name: tox
+
+on:
+  push:  # only publishes pushes to the main branch to TestPyPI
+    branches:  # any integration branch but not tag
+      - main
+    tags-ignore:
+      - "**"
+  pull_request:
+
+jobs:
+  pre:
+    name: pre
+    runs-on: ubuntu-22.04
+    outputs:
+      matrix: ${{ steps.generate_matrix.outputs.matrix }}
+    steps:
+      - name: Determine matrix
+        id: generate_matrix
+        uses: coactions/dynamic-matrix@v1
+        with:
+          other_names: |
+            lint
+            docs
+            pkg
+
+  alpine:
+    name: alpine
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run docker build
+        run: docker build .
+
+  unit:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os || 'ubuntu-22.04' }}
+    needs: pre
+    strategy:
+      matrix: ${{ fromJson(needs.pre.outputs.matrix) }}
+    steps:
+
+    - uses: actions/checkout@main
+      with:
+        fetch-depth: 0
+
+    - name: Set up stock Python ${{ matrix.python_version }} from GitHub
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ matrix.python_version }}
+
+    - name: Log the currently selected Python version info (${{ matrix.python_version }})
+      run: |
+        python --version --version
+        which python
+
+    - name: Pip cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: ${{ runner.os }}-pip-${{ env.PY_SHA256 }}-${{ hashFiles('setup.cfg') }}-${{ hashFiles('tox.ini') }}-${{ hashFiles('pyproject.toml') }}-${{ hashFiles('.pre-commit-config.yaml') }}-${{ hashFiles('pytest.ini') }}
+        restore-keys: |
+          ${{ runner.os }}-pip-
+          ${{ runner.os }}-
+
+    - name: Install tox
+      run: |
+          python -m pip install -U pip
+          pip install tox
+    - name: Run tox run -e ${{ matrix.passed_name }}
+      run: tox run -e ${{ matrix.passed_name }}
+
+  check: # This job does nothing and is only used for the branch protection
+    if: always()
+    needs:
+      - unit
+      - alpine
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Decide whether the needed jobs succeeded or failed
+        uses: re-actors/alls-green@release/v1
+        with:
+          jobs: ${{ toJSON(needs) }}

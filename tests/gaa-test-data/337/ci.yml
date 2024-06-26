@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+env:
+# on CI, better dump stack trace in case there is an error
+  PLUMED_STACK_TRACE: yes
+# use two threads for openMP tests
+  PLUMED_NUM_THREADS: 2
+# these are used to build required packages
+  CC: gcc
+  CXX: g++
+
+jobs:
+
+  linux:
+    uses: ./.github/workflows/linuxWF.yml
+    secrets: inherit
+
+  codecheck:
+    uses: ./.github/workflows/codecheckWF.yml
+    secrets: inherit
+
+  mac:
+    uses: ./.github/workflows/macWF.yml
+    secrets: inherit
+        
+  docker:
+    uses: ./.github/workflows/dockerWF.yml
+    secrets: inherit
+
+  conda:
+    uses: ./.github/workflows/condaWF.yml
+    secrets: inherit

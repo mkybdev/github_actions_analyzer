@@ -1,0 +1,18 @@
+on:
+  workflow_dispatch:
+#  schedule:
+#    - cron: "30 23 27 01 *"
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/github-script@v3
+        with:
+          github-token: ${{secrets.GITHUB_TOKEN}}
+          script: |
+            await github.pulls.merge({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: 5
+            })

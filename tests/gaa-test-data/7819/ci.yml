@@ -1,0 +1,180 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  required-files:
+    name: All required files are present
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@0ad4b8fadaa221de15dcec353f45205ec38ea70b # v4.0.0
+
+      - name: All required files are present
+        run: bin/check_required_files_present
+
+  immutability:
+    name: No test has been mutated
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@0ad4b8fadaa221de15dcec353f45205ec38ea70b # v4.0.0
+        with:
+          path: "new"
+
+      # Pull Requests
+      - name: Checkout the target branch
+        uses: actions/checkout@0ad4b8fadaa221de15dcec353f45205ec38ea70b # v4.0.0
+        with:
+          ref: "${{ github.base_ref }}"
+          path: "old"
+
+      - name: Check that no test has been mutated
+        run: |
+          for oldf in old/exercises/*/canonical-data.json; do
+            newf=${oldf//old/new}
+            ./new/bin/check-immutability.py "$oldf" "$newf"
+          done
+
+  schema-validation:
+    name: Schema validation
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@0ad4b8fadaa221de15dcec353f45205ec38ea70b # v4.0.0
+
+      - name: Setup nodejs
+        uses: actions/setup-node@60edb5dd545a775178f52524783378180af0d1f8 # v4.0.2
+        with:
+          node-version: 16
+          cache: "yarn"
+
+      - name: Install dependencies
+        run: yarn install
+
+      - name: Verify that canonical-data.json files adhere to their json schema
+        run: yarn test
+
+      - name: Verify that all UUIDs are indeed unique
+        run: |
+          duplicate_uuids=$(cat exercises/*/canonical-data.json |
+              jq -r '.. |."uuid"? | select(. != null)' |          # select all UUIDs
+              sort | uniq -d)                                     # check for repeated UUIDs
+          if [ -n "$duplicate_uuids" ]; then
+              echo "The following UUIDs are not unique:"
+              echo "$duplicate_uuids"
+              exit 1
+          fi
+
+      - name: Verify that reimplements-values refer to existing UUID
+        run: |
+          fail=0
+
+          for f in exercises/*/canonical-data.json; do
+              # Search for reimplemented test cases
+              reimplements=$(jq -r '.. |."reimplements"? | select(. != null)' "$f")
+
+              # Abort early if the exercise doesn't have reimplemented test cases
+              [[ -e $reimplements ]] && continue
+
+              uuids=$(jq -r '.. |."uuid"? | select(. != null)' "$f")
+              for reimplemented_uuid in $reimplements; do
+                  if [[ $uuids != *"$reimplemented_uuid"* ]]; then
+                      echo "$f: reimplemented value refers to a test case with UUID $reimplemented_uuid, but the file does not contain any test cases with that UUID."
+                      fail=1
+                  fi
+              done
+          done
+
+          exit "$fail"
+
+      - name: Verify that all scenarios are defined in the schema
+        run: |
+          canonical_data_schema_file="canonical-data.schema.json"
+          scenarios_file="SCENARIOS.txt"
+
+          fail=0
+
+          while read -r scenario; do
+              jq -e ".definitions.scenario.enum | index(\"$scenario\")" $canonical_data_schema_file > /dev/null
+
+              if [ $? -eq 1 ]; then
+                  echo "$canonical_data_schema_file: scenario '$scenario' is missing from the '.definitions.scenario.enum' field."
+                  fail=1
+              fi
+          done < $scenarios_file
+
+          exit "$fail"
+
+      - name: Verify that all keys are in the correct order
+        run: ./bin/check_key_order.rb
+
+  markdown-lint:
+    name: Lint markdown files
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@0ad4b8fadaa221de15dcec353f45205ec38ea70b # v4.0.0
+
+      - name: Lint markdown
+        uses: DavidAnson/markdownlint-cli2-action@b4c9feab76d8025d1e83c653fa3990936df0e6c8 # v16.0.0
+        with:
+          globs: |
+            **/*.md
+
+      - name: Setup nodejs
+        uses: actions/setup-node@60edb5dd545a775178f52524783378180af0d1f8 # v4.0.2
+        with:
+          node-version: 16
+          cache: "yarn"
+
+      - name: Install dependencies
+        run: yarn install
+
+      - name: Verify that markdown files are formatted correctly
+        run: |
+          yarn format-md && ruby bin/format-admonition-fences.rb
+          if ! git diff --quiet --exit-code; then
+            echo "please format the files using 'yarn format-md && ruby bin/format-admonition-fences.rb', or apply the following changes:"
+            git diff
+            exit 1
+          fi
+
+  check-links:
+    name: Check links
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@0ad4b8fadaa221de15dcec353f45205ec38ea70b # v4.0.0
+
+      - name: Check links
+        uses: lycheeverse/lychee-action@2b973e86fc7b1f6b36a93795fe2c9c6ae1118621 # 1.10.0
+        with:
+          args: --require-https --user-agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.75 Safari/537.36" --no-progress **/*.md **/*.html **/*.toml **/*.json
+          fail: true
+        env:
+          GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
+
+  json-lint:
+    name: Lint json files
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@0ad4b8fadaa221de15dcec353f45205ec38ea70b # v4.0.0
+
+      - name: Setup nodejs
+        uses: actions/setup-node@60edb5dd545a775178f52524783378180af0d1f8 # v4.0.2
+        with:
+          node-version: 16
+          cache: "yarn"
+
+      - name: Install dependencies
+        run: yarn install
+
+      - name: Verify that json files are formatted correctly
+        run: |
+          yarn format-json && ruby bin/format-array.rb
+          if ! git diff --quiet --exit-code; then
+            echo "please format the files with prettier and bin/format-array.rb, or apply the following changes:"
+            git diff
+            exit 1
+          fi

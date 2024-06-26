@@ -1,0 +1,284 @@
+name: CD
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: '42 2 1 * *'
+  workflow_dispatch:
+
+jobs:
+  ubuntu:
+    name: Ubuntu (Launchpad)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push'
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+      with:
+        fetch-depth: 0 # fetch the entire history so we can create the changelog
+
+    - name: Package for Launchpad
+      id: package
+      uses: ./.github/actions/package-launchpad
+      with:
+        DEB_PASSPHRASE: ${{ secrets.DEB_PASSPHRASE }}
+        DECRYPTION_KEY: ${{ secrets.DECRYPTION_KEY }}
+
+    - name: Deploy to Launchpad
+      uses: ./.github/actions/deploy-launchpad
+      with:
+        changes_files: ${{ steps.package.outputs.changes_files }}
+        devel-repo: "ppa:st.loeffler/test"
+        stable-repo: "ppa:st.loeffler/test"
+
+################################################################################
+
+  appimage:
+    name: Linux/AppImage
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Build
+      run: DOCKER_BUILDKIT=1 docker build -f ./.github/workflows/Dockerfile.appimage-debian -o out .
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: TeXworks-AppImage
+        path: out/TeXworks-*.AppImage
+
+################################################################################
+
+  win:
+    name: Windows
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        winVersion: [7, 10]
+        include:
+            # Latest Qt6 release [https://download.qt.io/official_releases/qt/]
+            # Qt 6.6 supports Windows >= 10 [https://doc.qt.io/qt-6/windows.html]
+          - winVersion: 10
+            qtVersionMajor: 6
+            additionalLibs: 'zstd;z'
+            # Qt 5.15 supports Windows >= 7 [https://doc.qt.io/qt-5/windows.html]
+          - winVersion: 7
+            qtVersionMajor: 5
+            additionalLibs: ''
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+    - name: Setup WSL
+      uses: Vampire/setup-wsl@v2
+      with:
+        distribution: Ubuntu-22.04
+
+    - name: Install dependencies
+      uses: ./.github/actions/setup-windows
+      with:
+        qt: ${{ matrix.qtVersionMajor }}
+
+    - name: Strip libraries
+      shell: wsl-bash {0}
+      if: matrix.qtVersionMajor == 6
+      run: |
+        # Work around https://github.com/microsoft/WSL/issues/3023
+        strip --remove-section=.note.ABI-tag /usr/lib/mxe/usr/x86_64-pc-linux-gnu/qt6/lib/*.so.*
+
+    - name: Configure
+      shell: wsl-bash {0}
+      # ./release is where Inno Setup looks for distribution files
+      run: |
+        /usr/lib/mxe/usr/bin/i686-w64-mingw32.static-cmake -B build -DTW_BUILD_ID='github' \
+          -DQT_DEFAULT_MAJOR_VERSION=${{ matrix.qtVersionMajor }} \
+          -DCMAKE_INSTALL_PREFIX="./release" \
+          -DPLATFORM_DEPENDENCIES='freetype;harfbuzz;freetype_too;bz2;iphlpapi;ssl;crypto;crypt32;ws2_32;sharpyuv' \
+          -DPoppler_ADDITIONAL_DEPENDENCIES='freetype;harfbuzz;freetype_too;glib-2.0;intl;iconv;ws2_32;winmm;tiff;webp;jpeg;openjp2;png;lcms2;lzma;bz2;pcre16;wtsapi32;sharpyuv;${{ matrix.additionalLibs }}' \
+          -DTEXWORKS_ADDITIONAL_LIBS='freetype;harfbuzz;freetype_too;bz2;wtsapi32;opengl32;imm32;shlwapi;dwmapi;uxtheme' \
+          -Dgp_tool='none'
+
+    - name: Debug
+      shell: wsl-bash {0}
+      run: cat build/unit-tests/CMakeFiles/test_BibTeXFile.dir/linklibs.rsp
+
+    - name: Build
+      shell: wsl-bash {0}
+      run: /usr/lib/mxe/usr/bin/i686-w64-mingw32.static-cmake --build build -v && /usr/lib/mxe/usr/bin/i686-w64-mingw32.static-cmake --install build -v
+
+    - name: Prepare testing
+      shell: wsl-bash {0}
+      run: |
+        echo "::group::Fixup CTest files"
+        SRC=$(pwd)
+        DST=$(echo "${{ github.workspace }}" | tr '\\' '/')
+        cd build
+        for FILE in $(find . -name CTestTestfile.cmake); do
+          echo "Fixing $FILE"
+          sed -ie "s|${SRC}|${DST}|g" "$FILE"
+        done
+        echo "::endgroup::"
+
+    - name: Test
+      run: ctest -V
+      working-directory: build
+      env:
+        QT_FORCE_STDERR_LOGGING: 1
+
+    - name: Package
+      uses: ./.github/actions/package-windows
+      id: package
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: TeXworks-Windows${{ matrix.winVersion }}
+        path: ${{ steps.package.outputs.file }}
+
+    - name: Build installer
+      run: ISCC texworks-setup-script.iss
+      working-directory: win32
+
+    - name: Upload installer artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: TeXworks-Windows${{ matrix.winVersion }}-Setup
+        path: win32/Output/*.exe
+
+#    - name: Deploy to Artifactory
+#      if: github.event_name == 'push'
+#      uses: ./.github/actions/deploy-artifactory
+#      with:
+#          file: ${{ steps.package.outputs.file }}
+#          baseurl: https://texworks.jfrog.io
+#          repo: windows-latest
+#          remotePath: ${{ steps.package.outputs.version }}
+#          username: st.loeffler@gmail.com
+#          key: ${{ secrets.jfrog_key }}
+
+################################################################################
+
+  macosx:
+    name: Mac OS X
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        label: [macOS 11 x86, macOS 11 arm, macOS 10 x86]
+        include:
+            # Latest open-source LTS Qt6 release [https://download.qt.io/official_releases/qt/]
+            # Qt 6.5 supports macOS >= 11 [https://doc.qt.io/qt-6.5/macos.html]
+          - label: macOS 11 x86
+            macVersion: 11
+            qtVersionMajor: 6
+            qtVersion: 6.5.3
+            qtModules: qt5compat
+            arch: x86_64
+          - label: macOS 11 arm
+            macVersion: 11
+            qtVersionMajor: 6
+            qtVersion: 6.5.3
+            qtModules: qt5compat
+            arch: arm64
+            # Qt 5.15 supports macOS >= 10.13 [https://doc.qt.io/qt-5.15/macos.html]
+            # poppler >= 22.01.0 uses std::filesystem, which seems to only be (fully)
+            # supported on macOS 10.15 and up
+          - label: macOS 10 x86
+            macVersion: 10.13
+            qtVersionMajor: 5
+            qtVersion: 5.15.2
+            qtModules: qtscript
+            arch: x86_64
+    env:
+      MACOSX_DEPLOYMENT_TARGET: ${{ matrix.macVersion }}
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v3
+
+      # Mono seems to provide some (potentially incompatible) headers that CMake
+      # might pick up on instead of ours
+    - name: Uninstall Mono
+      run: sudo /bin/sh -c "$(curl -fsSL https://github.com/gurza/cli-toolbox/raw/master/uninstall-apps/uninstall-mono.sh)"
+
+    - name: Install clean Homebrew dependencies
+      shell: bash
+      run: |
+        # Uninstall all packages
+        brew remove --force $(brew list --formula)
+        brew remove --cask --force $(brew list)
+        # Update Homebrew
+        brew update > brew_update.log || { echo "::error::Updating homebrew failed"; cat brew_update.log; exit 1; }
+        # Install needed dependencies
+        brew install automake cmake libtool pkg-config
+
+    - name: Install Qt
+      uses: jurplel/install-qt-action@v3
+      with:
+        version: ${{ matrix.qtVersion }}
+        modules: ${{ matrix.qtModules }}
+
+    - name: Cache dependencies
+      id: cache-dependencies
+      uses: actions/cache@v3
+      with:
+        key: twdeps-${{ runner.os }}-${{ env.MACOSX_DEPLOYMENT_TARGET }}-${{ matrix.arch }}-qt${{ matrix.qtVersion }}-${{ hashFiles('./.github/actions/setup-macos/*') }}
+        path: ${{ runner.temp }}/tw-deps
+
+    - name: Build dependencies
+      if: steps.cache-dependencies.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        cmake -S ".github/actions/setup-macos" -B ".github/actions/setup-macos/build" -DCMAKE_INSTALL_PREFIX="${RUNNER_TEMP}/tw-deps" -DQT_DEFAULT_MAJOR_VERSION=${{ matrix.qtVersionMajor }} -DCMAKE_OSX_ARCHITECTURES="${{ matrix.arch }}"
+        PATH="${RUNNER_TEMP}/tw-deps/bin:$PATH" PKG_CONFIG_PATH=${RUNNER_TEMP}/tw-deps/lib/pkgconfig cmake --build ".github/actions/setup-macos/build" -v
+
+    - name: Configure
+      run: cmake -B build -DTW_BUILD_ID='github' ${GITHUB_WORKSPACE} -DCMAKE_PREFIX_PATH="${RUNNER_TEMP}/tw-deps" -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=TRUE -DQT_DEFAULT_MAJOR_VERSION=${{ matrix.qtVersionMajor }} -DCMAKE_OSX_ARCHITECTURES="${{ matrix.arch }}" -DQT_PLUGIN_PATH=${QT_PLUGIN_PATH}
+
+    - name: Build
+      run: cmake --build build -j
+
+    - name: otool
+      working-directory: build
+      run: |
+        ls -lisa
+        otool -L test_poppler-*
+        otool -L ${RUNNER_TEMP}/tw-deps/lib/libpoppler*.dylib
+
+    - name: Test
+      run: DYLD_PRINT_LIBRARIES=1 ctest -V
+      working-directory: build
+
+    - name: Package
+      id: package
+      if: ${{ always() }}
+      uses: ./.github/actions/package-macos
+
+    - name: Upload artifact
+      uses: actions/upload-artifact@v3
+      if: ${{ always() }}
+      with:
+        name: TeXworks-macOS${{ matrix.macVersion }}-${{ matrix.arch }}
+        path: ${{ steps.package.outputs.file }}
+
+#    - name: Setup tmate session
+#      uses: mxschmitt/action-tmate@v3
+#      if: ${{ always() }}
+#      with:
+#        limit-access-to-actor: true
+
+#    - name: Deploy to Artifactory
+#      if: github.event_name == 'push'
+#      uses: ./.github/actions/deploy-artifactory
+#      with:
+#        file: ${{ steps.package.outputs.file }}
+#        baseurl: https://texworks.jfrog.io
+#        repo: macos-latest
+#        remotePath: ${{ steps.package.outputs.version }}
+#        username: st.loeffler@gmail.com
+#        key: ${{ secrets.jfrog_key }}

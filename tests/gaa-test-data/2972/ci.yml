@@ -1,0 +1,86 @@
+name: CI
+on:
+  push:
+    branches:
+      - master
+    paths-ignore:
+      - '**.md'
+      - .readthedocs.yaml
+      - doc/*
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          # - '3.6' (see https://github.com/actions/setup-python/issues/544)
+          - '3.7'
+          - '3.8'
+          - '3.9'
+          - '3.10'
+          - '3.11'
+          - '3.12'
+    steps:
+      - name: Check out
+        uses: actions/checkout@v3
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          distribution: 'adopt'
+          java-version: '8'
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Download Hadoop
+        run: |
+          echo "HADOOP_HOME=$(./scripts/hadoop.sh download)" >>"$GITHUB_ENV"
+      - name: Configure Hadoop
+        run: |
+          echo "HADOOP_CONF_DIR=$(./scripts/hadoop.sh config)" >>"$GITHUB_ENV"
+      - name: Start HDFS
+        run: |
+          ./scripts/hadoop.sh start
+          echo "WEBHDFS_URL=http://$("$HADOOP_HOME/bin/hdfs" getconf -confKey dfs.namenode.http-address)" >>"$GITHUB_ENV"
+          echo "HTTPFS_URL=http://localhost:14000" >>"$GITHUB_ENV"
+          sleep 5 # TODO: Find a better way to wait for all datanodes to become reachable.
+      - name: Install
+        run: pip install .[avro] coverage mock pytest pytest-cov pandas
+      - name: Test on WebHDFS
+        run: HDFSCLI_TEST_URL="$WEBHDFS_URL" python -m pytest --cov=hdfs
+      - name: Test on HTTPFS
+        run: HDFSCLI_TEST_URL="$HTTPFS_URL" HDFSCLI_NOSNAPSHOT=1 python -m pytest --cov=hdfs
+      - name: Stop HDFS
+        if: always()
+        run: ./scripts/hadoop.sh stop
+  tag:
+    name: Tag
+    needs:
+      - test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v3
+      - name: Extract version
+        id: extract-version
+        run: |
+          PACKAGE_VERSION="$(./scripts/version.sh)"
+          echo "version=$PACKAGE_VERSION" >>"$GITHUB_OUTPUT"
+      - name: Check if tag exists
+        uses: mukunku/tag-exists-action@v1.1.0
+        id: check-version
+        with:
+          tag: v${{ steps.extract-version.outputs.version }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Create tag
+        if: steps.check-version.outputs.exists == 'false'
+        uses: pkgdeps/git-tag-action@v2
+        with:
+          git_commit_sha: ${{ github.sha }}
+          git_tag_prefix: v
+          github_repo: ${{ github.repository }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          version: ${{ steps.extract-version.outputs.version }}

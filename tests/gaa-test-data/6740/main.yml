@@ -1,0 +1,29 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        node-version: [14.x, 16.x, 17.x]
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v2.1.4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: test module
+        run: |
+          yarn global add lerna
+          lerna clean -y && lerna bootstrap
+          cd packages/idyll-ast && yarn test && cd ../..
+          cd packages/idyll-compiler && yarn test && cd ../..
+          cd packages/idyll-components && yarn test && cd ../..
+          cd packages/idyll-document && yarn test && cd ../..
+          cd packages/idyll-layouts && yarn test && cd ../..
+          cd packages/idyll-themes && yarn test && cd ../..
+          cd packages/idyll-cli && yarn test && cd ../..

@@ -1,0 +1,25 @@
+name: ci
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: "GitHub variables"
+        run: echo "github.event_name = ${{ github.event_name }}, github.ref = ${{ github.ref }}"
+      - uses: actions/checkout@v2
+      - name: Set Node.js version
+        uses: actions/setup-node@v1
+        with:
+          node-version: "12.x"
+      - run: npm install
+      - run: sudo docker build . -t davdiv/assocomptes:latest
+      - name: Publish to dockerhub
+        run: |
+          echo ${{ secrets.DOCKERHUB_TOKEN }} | sudo docker login --username davdiv --password-stdin &&
+          sudo docker push davdiv/assocomptes:latest &&
+          sudo docker logout
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'

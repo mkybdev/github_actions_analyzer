@@ -1,0 +1,62 @@
+name: Build & Test
+
+on:
+  push:
+    paths-ignore:
+      - 'doc/**'
+    branches: [ main ]
+  pull_request:
+    paths-ignore:
+      - 'doc/**'
+    branches: [ main ]
+
+jobs:
+  build-and-test:
+    name: ${{ matrix.os }} -x- ${{ matrix.compiler }} -x- ${{ matrix.config }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [Debug, Release]
+        os: [ubuntu-latest, windows-latest]
+        compiler: [g++-13, clang++-15, MSVC]
+        exclude:
+          - os: ubuntu-latest
+            compiler: MSVC
+          - os: windows-latest
+            compiler: g++-13
+          - os: windows-latest
+            compiler: clang++-15
+            
+    steps:
+      - uses: actions/checkout@v2
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install C++ compilers, and CMake
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          # https://github.com/actions/runner-images/issues/7192
+          echo 'APT::Get::Always-Include-Phased-Updates "false";' | sudo tee /etc/apt/apt.conf.d/99-phased-updates
+          sudo apt update && sudo apt-get -y upgrade --fix-missing
+          sudo apt-get install build-essential cmake
+          sudo apt-get install ${{ matrix.compiler }}
+
+      - name: Configure and build
+        uses: lukka/run-cmake@v3
+        if: matrix.os == 'ubuntu-latest'
+        with:
+          buildDirectory: build
+          cmakeBuildType: ${{ matrix.config }}
+          buildWithCMakeArgs: --parallel
+          cmakeAppendedArgs: -DCMAKE_CXX_COMPILER=${{ matrix.compiler }}
+          cmakeListsOrSettingsJson: CMakeListsTxtAdvanced
+      - name: Configure and build
+        uses: lukka/run-cmake@v3
+        if: matrix.os == 'windows-latest'
+        with:
+          buildDirectory: build
+          buildWithCMakeArgs: --parallel --config ${{ matrix.config }}
+          cmakeGenerator: Ninja
+
+      - name: Run Tests
+        run: ctest build

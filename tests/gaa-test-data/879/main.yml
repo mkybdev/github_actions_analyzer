@@ -1,0 +1,56 @@
+name: Build & Test
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+
+jobs:
+  build-test:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-20.04
+            tag: 11
+          - os: windows-2019
+            llvm_archive: llvm-11.0.0-x86_64-windows-msvc-release-md
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Setup LLVM (Linux)
+        if: matrix.os == 'ubuntu-20.04'
+        run: |
+          # Disable man-db update
+          sudo rm -f /var/lib/man-db/auto-update
+
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x ./llvm.sh
+          sudo ./llvm.sh ${{ matrix.tag }}
+          sudo apt install -y llvm-${{ matrix.tag }}-dev libclang-${{ matrix.tag }}-dev liblldb-${{ matrix.tag }}-dev libc++-${{ matrix.tag }}-dev libc++abi-${{ matrix.tag }}-dev
+          echo "LLVM_INSTALL_PATH=/usr/lib/llvm-${{ matrix.tag }}" >> $GITHUB_ENV
+          echo "CC=clang-${{ matrix.tag }}" >> $GITHUB_ENV
+          echo "CXX=clang++-${{ matrix.tag }}" >> $GITHUB_ENV
+
+      - name: Setup LLVM (Windows)
+        if: matrix.os == 'windows-2019'
+        run: |
+          C:\msys64\usr\bin\wget.exe -q "https://github.com/google/lldb-eval/releases/download/llvm-11/${{ matrix.llvm_archive }}.7z"
+          7z x -y "${{ matrix.llvm_archive }}.7z"
+          echo "LLVM_INSTALL_PATH=$pwd/${{ matrix.llvm_archive }}" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8
+
+      - name: Build (fastbuild)
+        run: bazel build ...:all
+
+      - name: Test (fastbuild)
+        run: bazel test --test_output=errors ...:all
+
+      - name: Build (opt)
+        run: bazel build -c opt ...:all
+
+      - name: Test (opt)
+        run: bazel test -c opt --test_output=errors ...:all

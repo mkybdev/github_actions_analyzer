@@ -1,0 +1,91 @@
+# SPDX-FileCopyrightText: Red Hat, Inc.
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+name: CI
+on: [push, pull_request]
+env:
+  EXPORT_DIR: exported-artifacts
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: [centos-8, centos-9, alma-9]
+    container: quay.io/ovirt/vdsm-test:${{ matrix.distro }}
+    steps:
+    - uses: ovirt/checkout-action@main
+    - name: Run linters
+      run: ./ci/lint.sh
+  test-storage-user:
+    env:
+      TRAVIS_CI: 1
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: [centos-8, centos-9, alma-9]
+    container:
+      image: quay.io/ovirt/vdsm-test:${{ matrix.distro }}
+      # Required to create loop devices.
+      options: --privileged
+    steps:
+    - uses: ovirt/checkout-action@main
+    - name: Run storage tests as vdsm
+      run: ./ci/tests-storage.sh vdsm
+  test-storage-root:
+    env:
+      TRAVIS_CI: 1
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: [centos-8, centos-9, alma-9]
+    container:
+      image: quay.io/ovirt/vdsm-test:${{ matrix.distro }}
+      # Required to create loop devices.
+      options: --privileged
+    steps:
+    - uses: ovirt/checkout-action@main
+    - name: Run storage tests as root
+      run: ./ci/tests-storage.sh root
+  tests:
+    env:
+      TRAVIS_CI: 1
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        distro: [centos-8, centos-9, alma-9]
+    container:
+      image: quay.io/ovirt/vdsm-test:${{ matrix.distro }}
+      # Needed for many operations, i.e. creating bridges
+      options: --privileged
+    steps:
+    - uses: ovirt/checkout-action@main
+    - name: Run tests
+      run: ./ci/tests.sh
+  rpm:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: el8
+            container-name: el8stream
+          - name: el9
+            container-name: el9stream
+    name: ${{ matrix.name }}
+    container:
+      image: quay.io/ovirt/buildcontainer:${{ matrix.container-name }}
+    steps:
+    # we need the tags to be pulled for RPMs to have proper versions
+    - uses: ovirt/checkout-action@main
+      with:
+        fetch-depth: 0
+    - name: Build RPMs
+      run: ./ci/rpm.sh
+    - name: Upload artifacts
+      uses: ovirt/upload-rpms-action@main
+      with:
+        directory: ${{ env.EXPORT_DIR }}

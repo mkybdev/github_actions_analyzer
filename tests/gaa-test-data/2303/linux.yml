@@ -1,0 +1,65 @@
+# Copyright 2021 Google LLC
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#      http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: linux
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+  # Nightly builds
+  schedule:
+    - cron: '00 00 * * *'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        compiler: [dmd-latest, ldc-latest, dmd-beta, ldc-beta]
+
+    steps:
+    - uses: actions/checkout@v2
+    - uses: actions/cache@v1
+      with:
+        path: ~/.dub
+        key: ${{ runner.os }}-dub-${{ hashFiles('**/dub.json') }}
+        restore-keys: |
+          ${{ runner.os }}-dub-
+
+    - uses: actions/checkout@v2
+      with:
+        repository: google/re2
+        path: re2
+        ref: '2022-06-01'
+    - name: build-re2
+      run: |
+        cd re2
+        sudo make prefix=/usr install -j
+
+    - uses: dlang-community/setup-dlang@v1
+      with:
+        compiler: ${{ matrix.compiler }}
+    - name: Run tests
+      run: dub test -b=unittest-cov
+
+    - name: codecov
+      if: ${{ matrix.compiler == 'dmd-latest' }}
+      run: bash <(curl -s https://codecov.io/bash)

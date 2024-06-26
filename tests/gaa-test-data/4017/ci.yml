@@ -1,0 +1,79 @@
+name: CI
+on:
+  - push
+  - pull_request
+jobs:
+  test:
+    strategy:
+      matrix:
+        platform:
+          - Linux
+          - macOS
+          - Windows
+        python-version:
+          - '3.8'
+          - '3.9'
+          - '3.10'
+          - '3.11'
+          - '3.12'
+        architecture:
+          - x86
+          - x64
+        include:
+          - platform: Linux
+            os: ubuntu-latest
+          - platform: macOS
+            os: macos-latest
+          - platform: Windows
+            os: windows-latest
+        exclude:
+          - platform: Linux
+            architecture: x86
+          - platform: macOS
+            architecture: x86
+      fail-fast: false
+    name: Python ${{ matrix.python-version }} (${{ matrix.architecture }}) on ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    env:
+      CFLAGS: -Wall -Wextra --coverage
+      CXXFLAGS: -Wall -Wextra --coverage
+      HOMEBREW_NO_ANALYTICS: 1
+      HOMEBREW_NO_AUTO_UPDATE: 1
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          architecture: ${{ matrix.architecture }}
+      - name: Install dependencies
+        run: |
+          python -m pip install -U pip
+          python -m pip install -U coverage tox
+      - name: Install LCOV on Linux
+        if: matrix.platform == 'Linux'
+        run: sudo apt install lcov
+      - name: Install LCOV on macOS
+        if: matrix.platform == 'macOS'
+        run: brew install lcov
+      - name: Test
+        run: tox -e py
+      - name: Generate LCOV trace file
+        if: matrix.platform != 'Windows'
+        run: |
+          lcov -c -d . -o lcov.info --no-external --exclude '*/_zopfli/zopfli/*'
+          rm -rf build
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          env_vars: PYTHON_VERSION,ARCH
+          fail_ci_if_error: true
+          flags: ${{ matrix.platform }}
+        env:
+          PYTHON_VERSION: ${{ matrix.python-version }}
+          ARCH: ${{ matrix.architecture }}

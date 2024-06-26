@@ -1,0 +1,57 @@
+name: Build + Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Build + Test (Latest Go)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '^1'
+      - name: Check out code
+        uses: actions/checkout@v4
+      - name: Build
+        run: make
+      - name: Test
+        run: make test
+  releast-test:
+    name: Test (Release Go)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '^1'
+      - name: Check out code
+        uses: actions/checkout@v4
+      - name: Test
+        run: make DOCKER=docker release-test
+  prerelease:
+    name: Prerelease
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # for uploading artifacts
+      actions: write
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v4
+      - name: Release build
+        run: make DOCKER=docker restreamer-linux-amd64
+      - name: Upload test artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: restreamer-linux-amd64
+          path: restreamer-linux-amd64
+          retention-days: 10
+          overwrite: true

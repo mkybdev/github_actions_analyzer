@@ -1,0 +1,46 @@
+name: 'Unit'
+
+on:
+  push:
+    branches:
+      - 'main'
+      - 'release/**/*'
+  pull_request:
+    branches:
+      - 'main'
+      - 'release/**/*'
+  workflow_dispatch:
+
+concurrency:
+  group: '${{ github.workflow }}-${{ github.head_ref || github.ref }}'
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - 'ubuntu-latest'
+          - 'windows-2022'
+          - 'macos-latest'
+    runs-on: '${{ matrix.os }}'
+
+    steps:
+      - uses: 'actions/checkout@a5ac7e51b41094c92402da3b24376905380afc29' # ratchet:actions/checkout@v4
+
+      - uses: 'actions/setup-node@60edb5dd545a775178f52524783378180af0d1f8' # ratchet:actions/setup-node@v4
+        with:
+          node-version: '20.12.x' # https://github.com/nodejs/node/issues/53033
+
+      - name: 'npm build'
+        run: 'npm ci && npm run build'
+
+      - name: 'npm lint'
+        # There's no need to run the linter for each operating system, since it
+        # will find the same thing 9x and clog up the PR review.
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: 'npm run lint'
+
+      - name: 'npm test'
+        run: 'npm run test'

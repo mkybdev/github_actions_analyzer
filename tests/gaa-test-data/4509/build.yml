@@ -1,0 +1,33 @@
+name: .NET Core Build
+
+on: [push, pull_request]
+
+jobs:
+  build:
+
+    runs-on: windows-2019
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Setup .NET Core
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: 8.0.x
+    - name: Build DNTPersianUtils.Core lib
+      run: dotnet build ./src/DNTPersianUtils.Core/DNTPersianUtils.Core.csproj --configuration Release
+
+    - name: Test DNTPersianUtils.Core lib
+      run: dotnet test ./src/DNTPersianUtils.Core.Tests/DNTPersianUtils.Core.Tests.csproj --configuration Release
+
+    - name: Push Package to NuGet.org
+      if: github.event_name == 'push'
+      run: dotnet nuget push **\*.nupkg -k ${{ secrets.NUGET_API_KEY }} -s https://api.nuget.org/v3/index.json --skip-duplicate      
+
+    - run: dotnet tool update -g docfx
+    - run: docfx docs/docfx.json
+
+    - name: Deploy
+      uses: peaceiris/actions-gh-pages@v3
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: docs/_site

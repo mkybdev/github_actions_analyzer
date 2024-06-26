@@ -1,0 +1,20 @@
+name: Second Action
+
+on:
+  workflow_run:
+    workflows: ["First Action"]
+    types: [completed]
+
+jobs:
+  second:
+    name: Second
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dump GitHub context
+        env:
+          GITHUB_CONTEXT: ${{ toJSON(github) }}
+        run: echo "$GITHUB_CONTEXT"
+      - name: Dump GitHub event workflow run context
+        env:
+          GITHUB_CONTEXT: ${{ toJSON(github.event.workflow_run) }}
+        run: echo "$GITHUB_CONTEXT"

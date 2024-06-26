@@ -1,0 +1,88 @@
+---
+name: Cron Jobs
+
+######################################################################
+## minute         0-59
+## hour           0-23
+## day of month   1-31
+## month          1-12
+## day of week    0-7
+######################################################################
+
+# yamllint disable-line rule:truthy
+on:
+  schedule:
+    - cron: 0 0 * * * # every day at midnight
+  # Run workflow manually (without waiting for the cron to be called),
+  # through the Github Actions Workflow page directly.
+  workflow_dispatch:
+
+jobs:
+  cronjobs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Cache gems
+        uses: actions/cache@v4.0.1
+        with:
+          path: vendor/bundle
+          key: ${{ runner.os }}-gem-${{ hashFiles('**/Gemfile.lock') }}
+          restore-keys: ${{ runner.os }}-gem-
+
+      - run: pip install pre-commit
+        shell: bash
+
+      - run: pre-commit autoupdate
+        shell: bash
+
+      - uses: peter-evans/create-pull-request@v6.0.5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: update/pre-commit-hooks
+          title: Update pre-commit hooks
+          commit-message: Auto-update pre-commit hooks
+          body: Update versions of pre-commit hooks to latest version.
+
+      - name: Mark Stale Issues
+        uses: actions/stale@v9
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          days-before-close: 5
+          days-before-stale: 30
+          exempt-issue-labels: awaiting-approval
+          exempt-pr-labels: awaiting-approval
+          stale-issue-label: no-issue-activity
+          # yamllint disable-line rule:line-length
+          stale-issue-message: This issue is stale because it has been open 30 days with no activity.
+            Remove stale label or comment or this will be closed in 5 days.
+          stale-pr-label: no-pr-activity
+          # yamllint disable-line rule:line-length
+          stale-pr-message: This pull request is stale because it has been open 30 days with no activity.
+            Remove stale label or comment or this will be closed in 5 days.
+
+      - name: Build
+        uses: jerryjvl/jekyll-build-action@v1
+        env:
+          JEKYLL_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Speeds up installation of html-proofer.
+          NOKOGIRI_USE_SYSTEM_LIBRARIES: true
+
+      - name: Check HTML
+        uses: chabad360/htmlproofer@v2
+        timeout-minutes: 30
+        with:
+          # The directory to scan.
+          directory: ./_site
+          # The arguments to pass to HTMLProofer.
+          # Unsure how to enable alt tags for teaser images.
+          # Treat urls with this domain as internal urls.
+          # Keep in sync with bin/build.sh and .github/workflows/pull-requests-and-pushes.yml
+          # yamllint disable
+          arguments:
+            "--no-enforce-https --ignore-empty-alt --ignore-status-codes 401,403,429 --only-4xx\
+            \ --typhoeus '{ \"connecttimeout\": 30, \"timeout\": 30 }'\
+            \ --ignore-urls \"#,/4kib.com/,/archive.org/,/askubuntu.com/,/doi.org/,/enki.com/,/enkipro.com/,/help.github.com/,/mademistakes.com/,/medium.com/,/proinsias.github.io/,/serverfault.com/,/stackexchange.com/,/stackoverflow.com/,/towardsdatascience.com/,/twitter.com/\""
+            # yamllint enable

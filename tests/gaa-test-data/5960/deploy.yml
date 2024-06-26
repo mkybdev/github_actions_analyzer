@@ -1,0 +1,14 @@
+on: push
+name: Build and deploy on push to master
+jobs:
+  build:
+    name: cbrewster/brewblog-deploy-action
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@master
+    - name: cbrewster/brewblog-deploy-action
+      uses: cbrewster/brewblog-deploy-action@master
+      env:
+        PAGES_BRANCH: gh-pages
+        CNAME: cbrewster.dev
+        TOKEN: ${{ secrets.TOKEN }}

@@ -1,0 +1,49 @@
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 18
+      - run: npm ci
+      - run: npm run lint
+
+  test:
+    name: test (node ${{ matrix.node }}, mongodb ${{ matrix.mongo }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node: [18, 20]
+        mongo: [latest]
+        include:
+          - { node: 18, mongo: 6.0.11 }
+          - { node: 18, mongo: 5.0.22 }
+          - { node: 18, mongo: 4.4.25 }
+          - { node: 18, mongo: 3.6.23 }
+          - { node: 18, mongo: 2.6.12 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm ci
+      - run: npm run test:unit
+
+      - name: Supply MongoDB ${{ matrix.mongo }}
+        uses: supercharge/mongodb-github-action@1.5.0
+        with:
+          mongodb-version: ${{ matrix.mongo }}
+      - name: Supply integration test configuration file
+        run: cp config/test.sample.json config/test.json
+      - name: Make webservice available to be integration-tested
+        run: NODE_ENV=test node index.js &
+      - run: sleep 10s
+
+      - run: npm run test:integration

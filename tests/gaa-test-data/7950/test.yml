@@ -1,0 +1,49 @@
+name: Test
+on:
+  pull_request:
+  push: {branches: main}
+  schedule: [{cron: '0 0 10 * *'}] # monthly https://crontab.guru/#0_0_10_*_*
+  workflow_dispatch:
+permissions: {contents: read}
+
+jobs:
+  test:
+    uses: nodenv/.github/.github/workflows/test.yml@v4
+    with: {superlinter: false} # TODO renable superlinter
+    permissions:
+      contents: read
+      packages: read
+      id-token: write
+      security-events: write
+      statuses: write
+
+  # https://github.com/redhat-plumbers-in-action/differential-shellcheck
+  shellcheck:
+    permissions: {contents: read, security-events: write}
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+      with: {fetch-depth: 0}
+    - uses: redhat-plumbers-in-action/differential-shellcheck@60c9f2b924a9c5a2ddbb25e7b23e8e11b56faab9 # v5.3.0
+      with:
+        severity: error # TODO strengthen
+        token: ${{ secrets.GITHUB_TOKEN }}
+
+  lts:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+    - run: npm ci
+    - run: npm run lint:lts
+
+  checksums:
+    runs-on: ubuntu-latest
+    steps:
+      # FIXME workaround https://github.com/actions/checkout/issues/910
+    - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
+      with: { fetch-depth: 0 }
+    - run: npm ci
+    - if: github.event_name == 'pull_request'
+      run: npm run lint:checksums -- origin/${{github.base_ref}}
+    - run: npm run lint:checksums -- HEAD^
+      if: github.event_name == 'push'

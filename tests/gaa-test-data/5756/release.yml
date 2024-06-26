@@ -1,0 +1,121 @@
+# See related documentation in https://github.com/anz-bank/sysl/blob/master/docs/releasing.md
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+    paths-ignore:
+      - ts/**
+      - .github/workflows/npm-publish.yaml
+      - .github/workflows/ts.yaml
+
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  GOPROXY: ${{ vars.GOPROXY }}
+
+jobs:
+  release-sysl:
+    name: Release Sysl
+    runs-on: ${{ vars.RUNNER_UBUNTU && fromJSON(vars.RUNNER_UBUNTU) || 'ubuntu-latest' }}
+    steps:
+      - name: Set up Go
+        uses: actions/setup-go@v3
+        with:
+          go-version: 1.21
+          check-latest: true
+
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Check go.mod and go.sum are tidy
+        run: go mod tidy && make check-clean
+
+      - name: Test
+        run: make coverage
+        env:
+          SYSL_PLANTUML: http://www.plantuml.com/plantuml
+
+      - name: Validate goreleaser config
+        uses: goreleaser/goreleaser-action@v4.3.0
+        with:
+          version: v1.18.2
+          args: check -f .goreleaser.yml
+
+      - name: Set GOVERSION env var
+        run: echo "GOVERSION=$(go version | awk '{print $3, $4;}')" >> $GITHUB_ENV
+
+      # GoReleaser release process is customized in `.goreleaser.yml` file
+      - name: Release binaries via goreleaser
+        uses: goreleaser/goreleaser-action@v4.3.0
+        with:
+          version: v1.18.2
+          args: release --rm-dist --debug -f .goreleaser.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.REPO_ACCESS_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to DockerHub
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKER_USER }}
+          password: ${{ secrets.DOCKER_PASS }}
+
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v4
+        with:
+          images: |
+            docker.io/anzbank/sysl
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{raw}}
+            type=sha,prefix=,format=long
+          labels: |
+            org.opencontainers.image.url=https://sysl.io
+
+      - name: Build and push docker image
+        uses: docker/build-push-action@v3
+        with:
+          context: .
+          pull: true
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64,linux/arm64
+
+      - name: "Docker meta: sysl-version-diff"
+        id: diffmeta
+        uses: docker/metadata-action@v4
+        with:
+          images: |
+            docker.io/anzbank/sysl-version-diff
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{raw}}
+            type=sha,prefix=,format=long
+
+      - name: "Build and push docker image: sysl-version-diff"
+        uses: docker/build-push-action@v3
+        with:
+          context: .
+          file: sysl-version-diff/Dockerfile
+          pull: true
+          push: true
+          tags: ${{ steps.diffmeta.outputs.tags }}
+          labels: ${{ steps.diffmeta.outputs.labels }}
+
+      # FIXME: sysl_js hasn't been rebuilt for months and it is out of date.
+      # If sysl_js works again, please add NPM_PUBLISH_TOKEN to GitHub secrets
+      # and uncomment this step.
+      # - name: Release sysl_js
+      #   run: cd unsorted/sysl_js && NPM_AUTH_TOKEN=$ npm publish
+      #   env:
+      #     NPM_PUBLISH_TOKEN: ${{ secrets.NPM_PUBLISH_TOKEN }}

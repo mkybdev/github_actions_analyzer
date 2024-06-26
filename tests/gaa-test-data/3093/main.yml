@@ -1,0 +1,93 @@
+name: Build and test
+
+on:
+  push:
+  pull_request:
+  schedule:
+    # run daily, for initializing the cache if not generated yet.
+    - cron: '41 3 * * *'
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        ocaml-version: ["4.14.1", "4.14.2"]
+        experimental: [false]
+          # include:
+          # - ocaml-version: "5.2.0"
+          #   experimental: true
+
+    continue-on-error: ${{ matrix.experimental }}
+    env:
+      OCAML_VERSION: ${{ matrix.ocaml-version }}
+
+    steps:
+      - name: Update apt cache
+        run: sudo apt-get update
+        shell: bash
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free space
+        run: sudo rm -rf /usr/local/lib/android
+
+      - name: Use disk with more space for TMPDIR and XDG_CACHE_HOME
+        shell: bash
+        run: |
+          df -h || true
+          export TMPDIR="/mnt/build/tmp"
+          export XDG_CACHE_HOME="/mnt/build/cache"
+          sudo mkdir -p "${TMPDIR}" "${XDG_CACHE_HOME}"
+          sudo chown "$(id -u):$(id -g)" "${TMPDIR}" "${XDG_CACHE_HOME}"
+          echo "TMPDIR=${TMPDIR}" >>"$GITHUB_ENV"
+          echo "XDG_CACHE_HOME=${XDG_CACHE_HOME}" >>"$GITHUB_ENV"
+
+      - name: Use ocaml
+        uses: ocaml/setup-ocaml@v2
+        with:
+          ocaml-compiler: ${{ matrix.ocaml-version }}
+          opam-repositories: |
+            xs-opam: "."
+          opam-pin: false
+          dune-cache: true
+        env:
+          DUNE_CACHE_STORAGE_MODE: copy
+
+      - name: Check whether there are packages with more than a version
+        run: tools/no-duplicates-check.bash
+
+      - name: Check whether there are unused packages
+        run: tools/find-unused-packages.sh
+
+      - name: Check whether there are unlicensed packages
+        run: tools/license-check.sh
+
+      - name: Build xs-toolstack, test its dependencies
+        # opam install may ignore installing depexts sometimes
+        run: |
+          opam list -s --required-by xs-toolstack | xargs opam depext -tu
+          opam list -s --required-by xs-toolstack | xargs opam install -t
+        env:
+          # OPAMCOLOR is set to "always" by default and it breaks piping
+          OPAMCOLOR: NEVER
+          OPAMERRLOGLEN: 10000
+
+      - name: Uninstall unversioned packages
+        # This should purge them from the cache, unversioned package have
+        # 'master' as its version
+        run: opam list | awk -F " " '$2 == "master" { print $1 }' |  xargs opam uninstall
+        env:
+          # OPAMCOLOR is set to "always" by default and it breaks piping
+          OPAMCOLOR: NEVER
+          OPAMERRLOGLEN: 10000
+
+      - name: Install developer tools
+        run: opam install upstream-extra-dummy
+
+      - name: Print disk usage
+        shell: bash
+        run: df -h || true

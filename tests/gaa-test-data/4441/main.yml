@@ -1,0 +1,97 @@
+name: Build and Test
+
+on: [push]
+
+jobs:
+  dependencies:
+    runs-on: ubuntu-latest
+    name: Install Dependencies
+    steps:
+    - uses: actions/checkout@v2
+    - name: Cache node modules
+      uses: actions/cache@v2
+      env:
+        cache-name: grindstone-dependency-cache
+      with:
+        path: node_modules
+        key: ${{ runner.os}}-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
+    - name: Install dependencies
+      run: npm install
+
+  eslint:
+    runs-on: ubuntu-latest
+    name: Lint Scripts
+    needs: [dependencies]
+    steps:
+    - uses: actions/checkout@v2
+    - name: Restore npm cache
+      uses: actions/cache@v2
+      env:
+        cache-name: grindstone-dependency-cache
+      with:
+        path: node_modules
+        key: ${{ runner.os}}-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
+    - name: Lint all scripts
+      run: npm run lint
+
+  build:
+    runs-on: ubuntu-latest
+    name: Bundle Library
+    needs: [eslint]
+    steps:
+    - uses: actions/checkout@v2
+    - name: Restore npm cache
+      uses: actions/cache@v2
+      env:
+        cache-name: grindstone-dependency-cache
+      with:
+        path: node_modules
+        key: ${{ runner.os}}-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
+    - name: Bundle library
+      run: npm run build
+    - name: Upload artifact
+      uses: actions/upload-artifact@v1
+      with:
+        name: dist
+        path: dist
+
+  documentation:
+    runs-on: ubuntu-latest
+    name: Generate Documentation
+    needs: [eslint]
+    steps:
+    - uses: actions/checkout@v2
+    - name: Restore npm cache
+      uses: actions/cache@v2
+      env:
+        cache-name: grindstone-dependency-cache
+      with:
+        path: node_modules
+        key: ${{ runner.os}}-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
+    - name: Generate documentation
+      run: npm run docs
+
+  test:
+    runs-on: ubuntu-latest
+    name: Run Unit Tests
+    needs: [build]
+    steps:
+    - uses: actions/checkout@v2
+    - name: Restore npm cache
+      uses: actions/cache@v2
+      env:
+        cache-name: grindstone-dependency-cache
+      with:
+        path: node_modules
+        key: ${{ runner.os}}-${{ env.cache-name }}-${{ hashFiles('**/package-lock.json') }}
+    - name: Retrieve artifact
+      uses: actions/download-artifact@v1
+      with:
+        name: dist
+    - name: Run unit tests
+      run: npm test
+    - name: Upload test coverage
+      uses: codecov/codecov-action@v1
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        file: coverage/lcov.info

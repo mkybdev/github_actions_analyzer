@@ -1,0 +1,20 @@
+name: Release
+
+on:
+  create:
+    tags:
+      - /.*/
+
+jobs:
+  build:
+
+    runs-on: macOS-latest
+
+    steps:
+    - uses: actions/checkout@v1
+    - name: Lint Podspec
+      run: pod lib lint JSSAlertView.podspec
+    - name: Push Trunk
+      env:
+        COCOAPODS_TRUNK_TOKEN: ${{ secrets.COCOAPODS_TRUNK_TOKEN }}
+      run: pod trunk push JSSAlertView.podspec

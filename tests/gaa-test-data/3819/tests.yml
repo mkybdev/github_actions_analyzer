@@ -1,0 +1,50 @@
+name: Test Suite
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+    test:
+        runs-on: ${{matrix.operating-system}}
+        strategy:
+            matrix:
+                operating-system: [ ubuntu-latest ]
+                php: [ "8.0", "8.1", "8.2", "8.3" ]
+        name: PHP ${{matrix.php }} Unit Test
+        steps:
+            - uses: actions/checkout@v4
+            - name: Setup PHP
+              uses: shivammathur/setup-php@v2
+              with:
+                php-version: ${{ matrix.php }}
+                extensions: zip
+            - name: Install Dependencies
+              uses: nick-invision/retry@v3
+              with:
+                timeout_minutes: 10
+                max_attempts: 3
+                command: composer install
+            - name: Set Test Bin Dir
+              run: echo "$GITHUB_WORKSPACE/test/bin" >> $GITHUB_PATH
+            - name: Run Script
+              run: vendor/bin/phpunit
+
+    style:
+        runs-on: ubuntu-latest
+        name: PHP Style Check
+        steps:
+            - uses: actions/checkout@v4
+            - name: Setup PHP
+              uses: shivammathur/setup-php@v2
+              with:
+                php-version: "8.1"
+            - name: Install Dependencies
+              uses: nick-invision/retry@v3
+              with:
+                timeout_minutes: 10
+                max_attempts: 3
+                command: composer install
+            - name: Run Script
+              run: vendor/bin/php-cs-fixer fix .

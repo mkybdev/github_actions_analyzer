@@ -1,0 +1,30 @@
+name: build
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      config: 'Release'
+
+    steps:
+    - uses: actions/checkout@v2
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v1
+      with:
+        dotnet-version: '3.1.x'
+
+    - name: Restore dependencies
+      run: dotnet restore ./Annex.sln
+
+    - name: Build
+      run: dotnet build ./Annex.sln --no-restore --configuration $config
+
+    - name: Test
+      run: dotnet test ./Annex.sln --no-build --configuration $config --verbosity normal

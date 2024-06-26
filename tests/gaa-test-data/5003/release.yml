@@ -1,0 +1,35 @@
+---
+name: "release"
+
+on:
+    release:
+        types: ["published"]
+
+permissions: "read-all"
+
+jobs:
+    release:
+        runs-on: "ubuntu-latest"
+
+        permissions:
+            contents: "read"
+            id-token: "write"
+
+        steps:
+            - uses: "actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332"
+            - uses: "pnpm/action-setup@fe02b34f77f8bc703788d5817da081398fad5dd2"
+              with:
+                  version: "latest"
+            - uses: "actions/setup-node@60edb5dd545a775178f52524783378180af0d1f8"
+              with:
+                  node-version-file: ".nvmrc"
+                  cache: "pnpm"
+            - run: "make install"
+            - run: "make audit_signatures"
+            - run: "make build"
+            - run: "make lint"
+            - run: "make test"
+            - run: "pnpm config set //registry.npmjs.org/:_authToken=$NPM_AUTH_TOKEN"
+              env:
+                  NPM_AUTH_TOKEN: "${{ secrets.NPM_AUTH_TOKEN }}"
+            - run: "make publish"

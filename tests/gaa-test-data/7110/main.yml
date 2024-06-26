@@ -1,0 +1,271 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - "**" # we just don't want this to run redundantly on tags
+  pull_request:
+
+env:
+  PUB_ENVIRONMENT: bot.github
+
+jobs:
+  setup:
+    uses: ./.github/workflows/setup.yml
+
+  docs:
+    name: "Documentation"
+    needs: [setup]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docs
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/prepare
+        with:
+          dart_version: ${{ needs.setup.outputs.dart_version }}
+      - run: melos bootstrap --scope drift_docs,drift
+        working-directory: .
+      - name: Run build
+        env:
+          IS_RELEASE: ${{ github.event_name == 'push' && github.event.ref == 'refs/heads/latest-release' }}
+        run: dart run tool/ci_build.dart
+      - name: Analyze Dart and Drift sources
+        run: |
+          dart format -o none --set-exit-if-changed .
+          dart analyze --fatal-infos --fatal-warnings
+          dart run drift_dev analyze
+      - run: dart test
+      - name: Deploy to netlify (Branch)
+        if: ${{ github.event_name == 'push' }}
+        uses: nwtgck/actions-netlify@v2
+        with:
+          production-branch: latest-release
+          publish-dir: docs/deploy
+          enable-pull-request-comment: true
+          enable-commit-comment: false
+          netlify-config-path: "./netlify.toml"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+      - name: Deploy to netlify (Pull Request)
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: nwtgck/actions-netlify@v2
+        with:
+          production-branch: latest-release
+          publish-dir: docs/deploy
+          enable-pull-request-comment: true
+          enable-commit-comment: false
+          netlify-config-path: "./netlify.toml"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          alias: deploy-preview-${{ github.event.number }}
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+
+  drift:
+    name: "drift package"
+    needs: [setup]
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: drift
+    steps:
+      # setup
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/prepare
+        with:
+          dart_version: ${{ needs.setup.outputs.dart_version }}
+      - run: melos bootstrap --scope drift
+        working-directory: .
+      # analysis
+      - run: dart format -o none --set-exit-if-changed .
+        name: dartfmt
+      - run: dart analyze --fatal-infos --fatal-warnings
+      # build, test and upload coverage
+      - run: dart run build_runner build --delete-conflicting-outputs
+      - run: dart test --preset ci_unit_tests #-x background_isolate --coverage=coverage
+        env:
+          DID_RUN_BUILD_RUNNER: "1"
+  #      - uses: actions/upload-artifact@v2
+  #        with:
+  #          name: moor-coverage-data
+  #          path: |
+  #            moor/coverage/
+  #            moor/.dart_tool/package_config.json
+  #          retention-days: 1
+
+  drift_dev:
+    runs-on: ubuntu-latest
+    needs: [setup]
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: drift_dev
+    steps:
+      # setup
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/prepare
+        with:
+          dart_version: ${{ needs.setup.outputs.dart_version }}
+      - run: melos bootstrap --scope drift_dev
+        working-directory: .
+      # analysis
+      - run: dart format -o none --set-exit-if-changed .
+        name: dartfmt
+      - run: dart analyze --fatal-infos --fatal-warnings
+      - run: dart test
+        name: test
+
+  sqlparser:
+    runs-on: ubuntu-latest
+    needs: [setup]
+    defaults:
+      run:
+        working-directory: sqlparser
+    steps:
+      # setup
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/prepare
+        with:
+          dart_version: ${{ needs.setup.outputs.dart_version }}
+      - run: dart pub upgrade
+      # analysis
+      - run: dart format -o none --set-exit-if-changed .
+        name: dartfmt
+      - run: dart analyze --fatal-infos --fatal-warnings
+      # tests and coverage
+      - run: dart test #--coverage=coverage
+  #      - uses: actions/upload-artifact@v2
+  #        with:
+  #          name: sqlparser-coverage-data
+  #          path: |
+  #            sqlparser/coverage/
+  #            sqlparser/.dart_tool/package_config.json
+  #          retention-days: 1
+
+  misc_integration_tests:
+    name: "Integration tests"
+    needs: [setup]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+      mariadb:
+        image: mariadb
+        env:
+          MARIADB_ROOT_PASSWORD: password
+          MARIADB_DATABASE: database
+        ports:
+          - 3306:3306
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/prepare
+        with:
+          dart_version: ${{ needs.setup.outputs.dart_version }}
+      - run: melos bootstrap --no-flutter
+        working-directory: .
+      - name: Postgres integration tests
+        working-directory: extras/drift_postgres
+        run: |
+          dart pub upgrade
+          dart test -j 1
+      - name: MariaDB integration tests
+        working-directory: extras/drift_mariadb
+        continue-on-error: true
+        run: |
+          dart pub upgrade
+          dart test
+      - name: Integration test with built_value
+        working-directory: examples/with_built_value
+        run: |
+          dart pub upgrade
+          dart run build_runner build --delete-conflicting-outputs
+      - name: Integration test with modular generation
+        working-directory: examples/modular
+        run: |
+          dart pub upgrade
+          dart run build_runner build --delete-conflicting-outputs
+          dart run bin/example.dart
+      - name: Integration test for migrations example
+        working-directory: examples/migrations_example
+        run: |
+          dart pub upgrade
+          dart test
+  test_flutter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          cache: true
+          cache-key: "flutter-:os:-:channel:-:version:-:arch:-:hash:"
+          cache-path: "${{ runner.tool_cache }}/flutter/:channel:-:version:-:arch:"
+      - name: Install dependencies in drift/example/app
+        working-directory: examples/app
+        run: flutter pub get
+      - run: flutter test
+        working-directory: examples/app
+  migration_integration_tests:
+    name: "Integration tests for migration tooling"
+    needs: [setup]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/prepare
+        with:
+          dart_version: ${{ needs.setup.outputs.dart_version }}
+      - run: melos bootstrap --scope migrations_example
+        working-directory: .
+      - name: Run build
+        working-directory: examples/migrations_example
+        run: |
+          dart run build_runner build --delete-conflicting-outputs
+          dart run drift_dev schema generate drift_migrations/ test/generated/ --data-classes --companions
+          dart run drift_dev schema generate drift_migrations/ lib/src/generated
+      - name: Test
+        working-directory: examples/migrations_example
+        run: dart test
+      - name: Test with older sqlite3
+        working-directory: examples/migrations_example
+        run: |
+          LD_LIBRARY_PATH=$(realpath drift/.dart_tool/sqlite3/minimum) dart test
+      - name: Check that extracting schema still works
+        working-directory: examples/migrations_example
+        run: dart run drift_dev schema dump lib/database.dart drift_migrations/
+#  upload_coverage:
+#    runs-on: ubuntu-20.04
+#    needs: [moor, sqlparser]
+#    steps:
+#      - uses: actions/checkout@v2
+#      - uses: dart-lang/setup-dart@v1
+#      - run: dart pub upgrade
+#        name: "Setup coverage processor"
+#        working-directory: extras/tooling
+#      - uses: actions/download-artifact@v2
+#        with:
+#          name: moor-coverage-data
+#          path: moor/
+#      - uses: actions/download-artifact@v2
+#        with:
+#          name: sqlparser-coverage-data
+#          path: sqlparser/
+#      - run: dart run extras/tooling/bin/coverage.dart
+#        name: "Format coverage from raw data"
+#      - uses: codecov/codecov-action@v1
+#        with:
+#          file: lcov.info

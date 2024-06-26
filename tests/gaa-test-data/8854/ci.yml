@@ -1,0 +1,13 @@
+name: CI
+
+on: [pull_request, push]
+
+permissions:
+  contents: read
+
+jobs:
+  tests:
+    uses: ljharb/actions/.github/workflows/node-majors.yml@main
+    with:
+      range: '>= 14.17'
+      command: 'npm run tests-only && npm run licenses'

@@ -1,0 +1,97 @@
+# SPDX-FileCopyrightText: © Vegard IT GmbH (https://vegardit.com) and contributors
+# SPDX-FileContributor: Sebastian Thomschke, Vegard IT GmbH
+# SPDX-License-Identifier: Apache-2.0
+#
+# https://docs.github.com/en/free-pro-team@latest/actions/reference/workflow-syntax-for-github-actions
+name: Build
+
+on:
+  push:
+    branches:
+    - '**'
+    tags-ignore:
+    - '**'
+    paths-ignore:
+    - '**/*.adoc'
+    - '**/*.md'
+    - '.editorconfig'
+    - '.git*'
+    - '.github/*.yml'
+    - '.github/workflows/stale.yml'
+    - 'tools'
+  pull_request:
+  workflow_dispatch:
+    # https://github.blog/changelog/2020-07-06-github-actions-manual-triggers-with-workflow_dispatch/
+    inputs:
+      debug-with-ssh:
+        description: "Start an SSH session for debugging purposes after tests ran:"
+        default: never
+        type: choice
+        options: [ always, on_failure, on_failure_or_cancelled, never ]
+      debug-with-ssh-only-for-actor:
+        description: "Limit access to the SSH session to the GitHub user that triggered the job."
+        default: true
+        type: boolean
+      debug-with-ssh-only-jobs-matching:
+        description: "Only start an SSH session for jobs matching this regex pattern:"
+        default: ".*"
+        type: string
+      test-target:
+        description: "If specified only the given target will be tested"
+        default: ""
+        type: choice
+        options: [ "", cpp, cs, eval, flash, hl, java, jvm, lua, neko, node, php, python ]
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    # https://github.com/vegardit/haxe-reusable-workflows/
+    uses: vegardit/haxe-reusable-workflows/.github/workflows/test-with-haxe.yml@dev
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+        - ubuntu-latest
+        - macos-latest
+        - windows-latest
+        haxe:
+        - nightly
+        - 4.3.4
+        - 4.2.5
+    with:
+      haxe-reusable-workflows-version: dev
+
+      runner-os: ${{ matrix.os }}
+      haxe-version: ${{ matrix.haxe }}
+      haxe-libs: haxe-doctest hx3compat
+
+      debug-with-ssh: ${{ inputs.debug-with-ssh || 'never' }}
+      debug-with-ssh-only-for-actor: ${{ inputs.debug-with-ssh-only-for-actor || false }}
+      debug-with-ssh-only-jobs-matching: ${{ inputs.debug-with-ssh-only-jobs-matching }}
+
+      test-cpp:    ${{ inputs.test-target == '' || inputs.test-target == 'cpp' }}
+      test-cs:     ${{ (inputs.test-target == '' || inputs.test-target == 'cs') && matrix.haxe != 'nightly'}}  # Haxe 5 drops C# Support
+      test-eval:   ${{ inputs.test-target == '' || inputs.test-target == 'eval' }}
+      test-flash: |
+        enabled: ${{ (inputs.test-target == '' || inputs.test-target == 'flash') && !startsWith(matrix.os, 'macos') }} # FlashPlayer hangs on MacOS
+        allow-failure: true # workaround for random "Application crashed with an unhandled SIGSEGV" on Linux and timing issues on Windows
+      test-hl: |
+        enabled: ${{ inputs.test-target == '' || inputs.test-target == 'hl' }}
+        allow-failure: true # Segmentation faults https://github.com/HaxeFoundation/hashlink/issues/579
+      test-java:   ${{ (inputs.test-target == '' || inputs.test-target == 'java') && matrix.haxe != 'nightly' }} # Haxe 5 drops Java Support
+      test-jvm:    ${{ inputs.test-target == '' || inputs.test-target == 'jvm' }}
+      test-lua:    ${{ inputs.test-target == '' || inputs.test-target == 'lua' }}
+      test-neko:   ${{ inputs.test-target == '' || inputs.test-target == 'neko' }}
+      test-node:   ${{ inputs.test-target == '' || inputs.test-target == 'node' }}
+      test-php:    ${{ inputs.test-target == '' || inputs.test-target == 'php' }}
+      test-python: ${{ inputs.test-target == '' || inputs.test-target == 'python' }}
+
+      allow-failure: ${{ matrix.haxe == 'nightly' }}
+
+      before-tests: |
+        if [[ $OSTYPE == linux* ]] && ! hash ping &>/dev/null; then
+          sudo apt-get install iputils-ping
+        fi

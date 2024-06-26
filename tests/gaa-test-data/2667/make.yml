@@ -1,0 +1,420 @@
+name: Win/Mac/Linux
+
+on:
+  push:
+    tags:
+      - v* # push events versioned tags
+    branches:
+      - master
+
+env:
+  AUTOTESTER_LIBS_GROUP: ${{github.workspace}}/toolchain/clibs.8xg
+  AUTOTESTER_ROM: ${{github.workspace}}/secrets/84pce_515_53.rom
+  CEDEV: ${{github.workspace}}/CEdev
+  CEDEV_BIN: ${{github.workspace}}/CEdev/bin
+  CEDEV_EXAMPLES: ${{github.workspace}}/CEdev/examples
+  CEDEV_TEST: ${{github.workspace}}/toolchain/test
+  CEMU_PATH: ${{github.workspace}}/CEmu
+  FASMG_DOMAIN: https://flatassembler.net
+  FASMG_PATH: ${{github.workspace}}/fasmg
+  HOST_DOMAIN: https://jacobly.com
+  SECRETS_PATH: ${{github.workspace}}/secrets
+  TOOLCHAIN_PATH: ${{github.workspace}}/toolchain
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        runs-on: [ubuntu-20.04, macos-latest, windows-latest]
+        include:
+          - nul: /dev/null
+          - runs-on: macos-latest
+            fasmg: /source/macos/x64/fasmg
+            install-output-ext: "dmg"
+          - runs-on: windows-latest
+            fasmg: /fasmg.exe
+            env: "env:"
+            exe: .exe
+            nul: nul
+            ldflags: LDFLAGS="-static-libgcc -static-libstdc++ -static"
+            install-output-ext: "zip"
+          - runs-on: ubuntu-20.04
+            fasmg: /fasmg.x64
+            install-output-ext: "tar.gz"
+    runs-on: ${{matrix.runs-on}}
+    steps:
+      - name: Prepare Build Environment
+        run: cmake -E echo >> $${{matrix.env}}GITHUB_PATH ${{env.CEDEV_BIN}}
+
+      - name: Download ez80-clang
+        id: ez80-clang
+        uses: carlosperate/download-file-action@v1.0.3
+        with:
+          file-url: ${{env.HOST_DOMAIN}}/artifact?repo=llvm-project&branch=z80&file=ez80-clang${{matrix.exe}}-${{matrix.runs-on}}Release
+      - name: Extract ez80-clang
+        uses: DuckSoft/extract-7z-action@v1.0
+        with:
+          pathSource: ${{steps.ez80-clang.outputs.file-path}}
+          pathTarget: ${{env.CEDEV_BIN}}
+
+      - name: Download ez80-link
+        id: ez80-link
+        uses: carlosperate/download-file-action@v1.0.3
+        with:
+          file-url: ${{env.HOST_DOMAIN}}/artifact?repo=llvm-project&branch=z80&file=ez80-link${{matrix.exe}}-${{matrix.runs-on}}Release
+      - name: Extract ez80-link
+        uses: DuckSoft/extract-7z-action@v1.0
+        with:
+          pathSource: ${{steps.ez80-link.outputs.file-path}}
+          pathTarget: ${{env.CEDEV_BIN}}
+
+      - name: Download Fasmg Download Page
+        id: fasmg-download
+        uses: carlosperate/download-file-action@v1.0.3
+        with:
+          file-url: ${{env.FASMG_DOMAIN}}/download.php
+      - name: Parse Fasmg Download Page
+        id: fasmg-url
+        uses: QwerMike/xpath-action@v1
+        with:
+          filename: ${{steps.fasmg-download.outputs.file-path}}
+          expression: //a[starts-with(text(),"flat assembler g ")]/@href
+      - name: Extract Fasmg Url
+        run: cmake -E echo >> $${{matrix.env}}GITHUB_ENV ${{steps.fasmg-url.outputs.result}}
+      - name: Download Fasmg
+        id: fasmg
+        uses: carlosperate/download-file-action@v1.0.3
+        with:
+          file-url: ${{env.FASMG_DOMAIN}}/${{env.href}}
+      - name: Extract Fasmg
+        uses: DuckSoft/extract-7z-action@v1.0
+        with:
+          pathSource: ${{steps.fasmg.outputs.file-path}}
+          pathTarget: ${{env.FASMG_PATH}}
+      - name: Setup Fasmg
+        run: cmake -E copy fasmg${{matrix.fasmg}} ${{env.CEDEV_BIN}}/fasmg${{matrix.exe}}
+
+      - name: Checkout CEmu
+        uses: actions/checkout@v3
+        with:
+          repository: ${{github.repository_owner}}/CEmu
+          ref: latest-stable
+          path: ${{env.CEMU_PATH}}
+          persist-credentials: false
+      - name: Build CEmu
+        run: make -j4 -C ${{env.CEMU_PATH}}/core
+      - name: Build Autotester CLI
+        run: make -j4 -C ${{env.CEMU_PATH}}/tests/autotester ${{matrix.ldflags}}
+      - name: Install Autotester CLI
+        run: cmake -E copy ${{env.CEMU_PATH}}/tests/autotester/autotester${{matrix.exe}} ${{env.CEDEV_BIN}}/cemu-autotester${{matrix.exe}}
+
+      - name: Make Binaries Executable
+        if: runner.os != 'Windows'
+        run: chmod +x ${{env.CEDEV_BIN}}/*
+      - name: Test Build Dependencies
+        run: |
+          ez80-clang --version
+          ez80-link --version
+          fasmg ${{matrix.nul}} ${{matrix.nul}}
+
+      - name: Checkout Toolchain
+        uses: actions/checkout@v3
+        with:
+          path: ${{env.TOOLCHAIN_PATH}}
+          submodules: recursive
+          persist-credentials: false
+
+      - name: Build Toolchain
+        run: make -j4 -C ${{env.TOOLCHAIN_PATH}} V=1
+      - name: Build Libraries
+        run: |
+          make -j4 -C ${{env.TOOLCHAIN_PATH}} libs V=1
+          make -j4 -C ${{env.TOOLCHAIN_PATH}} libs-zip V=1
+
+      - name: Install Toolchain
+        env:
+          PREFIX: ${{github.workspace}}
+        run: make -j4 -C ${{env.TOOLCHAIN_PATH}} install V=1 DESTDIR=${{github.workspace}}/
+
+      - name: Make Binaries Executable
+        if: runner.os != 'Windows'
+        run: chmod +x ${{env.CEDEV_BIN}}/*
+
+      - name: "[macOS] CodeSign Toolchain binaries"
+        if: runner.os == 'macOS' && github.repository == 'CE-Programming/toolchain' # don't run on forks, since they don't have secrets
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          MACOS_KEYCHAIN_PWD: ${{ secrets.MACOS_KEYCHAIN_PWD }}
+          MACOS_CODESIGN_IDENT: ${{ secrets.MACOS_CODESIGN_IDENT }}
+        run: |
+          echo $MACOS_CERTIFICATE | base64 -d > certificate.p12
+          security create-keychain -p $MACOS_KEYCHAIN_PWD build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p $MACOS_KEYCHAIN_PWD build.keychain
+          security import certificate.p12 -k build.keychain -P $MACOS_CERTIFICATE_PWD -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k $MACOS_KEYCHAIN_PWD build.keychain
+          /usr/bin/codesign --deep --force --verify --verbose --sign "$MACOS_CODESIGN_IDENT" --timestamp --options runtime $CEDEV_BIN/*
+
+      - name: "[macOS] Create the DMG"
+        if: runner.os == 'macOS'
+        run: |
+          brew install create-dmg || brew install create-dmg; # we try twice because sometimes it fails...
+          cp -a "${CEDEV}" "${TOOLCHAIN_PATH}/resources/macOS/dmg/contents/";
+          # The codesign variable may be empty (for forks) but that's fine, create-dmg only does code-signing if it's not empty.
+          createDmgArgs="--codesign '${{ secrets.MACOS_CODESIGN_IDENT }}' \
+              --volname 'CE Programming Toolchain' \
+              --volicon '${TOOLCHAIN_PATH}/resources/macOS/dmg/icon.icns' \
+              --background '${TOOLCHAIN_PATH}/resources/macOS/dmg/background.png' \
+              --window-pos 200 120 \
+              --window-size 600 400 \
+              --icon-size 64 \
+              --icon 'Readme.txt' 125 120 \
+              --icon 'CEdev' 125 275 \
+              'CEdev-${{runner.os}}.${{matrix.install-output-ext}}' \
+              '${TOOLCHAIN_PATH}/resources/macOS/dmg/contents'"
+          eval "create-dmg $createDmgArgs" || eval "create-dmg $createDmgArgs" # We also retry just in case...
+
+      - name: "[macOS] Notarize and staple DMG"
+        if: runner.os == 'macOS' && github.repository == 'CE-Programming/toolchain' # don't run on forks, since they don't have secrets
+        env:
+          APPLE_NOTARIZATION_USERNAME: ${{ secrets.APPLE_NOTARIZATION_USERNAME }}
+          APPLE_NOTARIZATION_PASSWORD: ${{ secrets.APPLE_NOTARIZATION_PASSWORD }}
+          APPLE_NOTARIZATION_TEAMID: ${{ secrets.APPLE_NOTARIZATION_TEAMID }}
+        run: |
+          xcrun notarytool store-credentials "notarytool-profile" --apple-id "$APPLE_NOTARIZATION_USERNAME" --team-id "$APPLE_NOTARIZATION_TEAMID" --password "$APPLE_NOTARIZATION_PASSWORD"
+          xcrun notarytool submit "CEdev-${{runner.os}}.${{matrix.install-output-ext}}" --keychain-profile "notarytool-profile" --wait
+          xcrun stapler staple "CEdev-${{runner.os}}.${{matrix.install-output-ext}}"
+
+      - name: "[Linux] Tar toolchain"
+        if: runner.os == 'Linux'
+        run: |
+          tar -C ${{env.CEDEV}}/.. -czvf CEdev-${{runner.os}}.${{matrix.install-output-ext}} CEdev
+      - name: "[Windows] Zip toolchain"
+        if: runner.os == 'Windows'
+        run: |
+          cd ${{env.CEDEV}}/.. && 7z a -tzip CEdev-${{runner.os}}.${{matrix.install-output-ext}} CEdev
+
+      - name: Upload CEdev
+        uses: actions/upload-artifact@v2
+        with:
+          name: CEdev-${{runner.os}}
+          path: CEdev-${{runner.os}}.${{matrix.install-output-ext}}
+
+      - name: Upload Libraries
+        uses: actions/upload-artifact@v2
+        with:
+          name: clibs
+          path: ${{env.AUTOTESTER_LIBS_GROUP}}
+
+      - name: Upload Libraries Zip
+        uses: actions/upload-artifact@v2
+        with:
+          name: clibs_separately_in_zip
+          path: ${{github.workspace}}/toolchain/clibs
+
+  test:
+    needs: build
+    environment: Autotester
+    strategy:
+      fail-fast: false
+      matrix:
+        runs-on: [ubuntu, macos, windows]
+        compressed: [YES, NO]
+        include:
+          - runs-on: windows
+            env: "env:"
+    runs-on: ${{matrix.runs-on}}-latest
+    steps:
+      - name: Prepare Test Environment
+        run: cmake -E echo >> $${{matrix.env}}GITHUB_PATH ${{env.CEDEV_BIN}}
+
+      - name: Download CEdev
+        uses: actions/download-artifact@v3
+        with:
+          name: CEdev-${{runner.os}}
+          path: ${{github.workspace}}
+      - name: Extract Artifact Contents
+        if: runner.os == 'Linux'
+        run: tar -xvf CEdev-${{runner.os}}.tar.gz
+      - name: Extract Artifact Contents
+        if: runner.os == 'macOS'
+        run: |
+           hdiutil attach CEdev-${{runner.os}}.dmg
+           cp -a "/Volumes/CE Programming Toolchain/CEdev" ./
+           umount "/Volumes/CE Programming Toolchain"
+      - name: Extract Artifact Contents
+        if: runner.os == 'Windows'
+        run: |
+         cd ${{github.workspace}} && 7z x CEdev-${{runner.os}}.zip
+
+      # checkout only for test files -- contents should not be used otherwise.
+      - name: Checkout Toolchain
+        uses: actions/checkout@v3
+        with:
+          path: ${{env.TOOLCHAIN_PATH}}
+          persist-credentials: false
+
+      - name: Build Test Graphics
+        run: make -j4 -C ${{env.CEDEV_TEST}} COMPRESSED=${{matrix.compressed}} V=1 gfx
+      - name: Build Tests
+        run: make -j4 -C ${{env.CEDEV_TEST}} COMPRESSED=${{matrix.compressed}} V=1
+
+      - name: Build Example Graphics
+        run: make -j4 -C ${{env.CEDEV_EXAMPLES}} COMPRESSED=${{matrix.compressed}} V=1 gfx
+      - name: Build Examples
+        run: make -j4 -C ${{env.CEDEV_EXAMPLES}} COMPRESSED=${{matrix.compressed}} V=1
+
+      - name: Download Secrets
+        id: download-secrets
+        uses: carlosperate/download-file-action@v1.0.3
+        with:
+          file-url: ${{env.HOST_DOMAIN}}/${{github.repository_owner}}/secrets
+          location: ${{env.SECRETS_PATH}}
+      - name: Decrypt Secrets
+        env:
+          KEY: ${{secrets.SYMMETRIC_KEY_256}}
+        run: openssl enc -d -aes-256-cbc -iv a581c6a54a2b51143fecad6794deb32a -K "$${{matrix.env}}KEY" -in ${{steps.download-secrets.outputs.file-path}} -out ${{env.SECRETS_PATH}}/secrets.7z
+      - name: Extract Secrets
+        uses: DuckSoft/extract-7z-action@v1.0
+        with:
+          pathSource: ${{env.SECRETS_PATH}}/secrets.7z
+          pathTarget: ${{env.SECRETS_PATH}}
+
+      - name: Download Libraries
+        uses: actions/download-artifact@v3
+        with:
+          name: clibs
+          path: ${{env.TOOLCHAIN_PATH}}
+      - name: Test Examples
+        if: runner.os != 'Windows'
+        run: |
+          find ${{env.CEDEV_EXAMPLES}} -name autotest.json -print0 | {
+            failed=0
+            while read -d '' test; do
+              make -C $(dirname $test) test || cmake -E true $((failed += $?))
+            done
+            cmake -E echo "$failed tests failed"
+            exit $failed
+          }
+      - name: Test Examples
+        if: runner.os == 'Windows'
+        run: |
+          $failed = 0
+          foreach ($test in get-childitem "${{env.CEDEV_EXAMPLES}}" -recurse -include autotest.json) {
+            make -C (split-path -path $test) test
+            $failed += $lastexitcode
+          }
+          cmake -E echo "$failed tests failed"
+          exit $failed
+      - name: Test Tests
+        if: runner.os != 'Windows'
+        run: |
+          find ${{env.CEDEV_TEST}} -name autotest.json -print0 | {
+            failed=0
+            while read -d '' test; do
+              make -C $(dirname $test) test || cmake -E true $((failed += $?))
+            done
+            cmake -E echo "$failed tests failed"
+            exit $failed
+          }
+      - name: Test Tests
+        if: runner.os == 'Windows'
+        run: |
+          $failed = 0
+          foreach ($test in get-childitem "${{env.CEDEV_TEST}}" -recurse -include autotest.json) {
+            make -C (split-path -path $test) test
+            $failed += $lastexitcode
+          }
+          cmake -E echo "$failed tests failed"
+          exit $failed
+
+      - name: Remove Secrets
+        if: always()
+        run: cmake -E rm -rf ${{env.SECRETS_PATH}}
+
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Documentation Dependencies
+        run: |
+          sudo apt-get install -y doxygen
+          cmake -E echo >> $${{matrix.env}}GITHUB_PATH $${{matrix.env}}HOME/.local/bin
+
+      - name: Checkout Toolchain
+        uses: actions/checkout@v3
+        with:
+          path: ${{env.TOOLCHAIN_PATH}}
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Install Sphinx Dependencies
+        run: pip install -r ${{env.TOOLCHAIN_PATH}}/docs/requirements.txt
+
+      - name: Build Website Documentation
+        run: make -C ${{env.TOOLCHAIN_PATH}} docs
+      - name: Disable Jekyll
+        run: touch ${{env.TOOLCHAIN_PATH}}/docs/build/html/.nojekyll
+      - name: Remove .pickle files
+        run: find ${{env.TOOLCHAIN_PATH}}/docs/build/ -name '*.pickle' -delete
+
+      - name: Upload Website Documentation
+        if: github.ref == 'refs/heads/master'
+        run: |
+          git config --global user.name 'gh-pages'
+          git config --global user.email '<>'
+          cd ${{env.TOOLCHAIN_PATH}}/docs/build/html
+          git init
+          git remote add origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
+          git checkout -b gh-pages
+          git add .
+          git commit -m "build documentation"
+          git fetch origin gh-pages
+          git diff --quiet origin/gh-pages gh-pages || git push -f origin gh-pages
+
+  nightly:
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/master'
+
+    steps:
+      - name: Download CEdev Linux
+        uses: actions/download-artifact@v3
+        with:
+          name: CEdev-Linux
+          path: ${{github.workspace}}
+      - name: Download CEdev Windows
+        uses: actions/download-artifact@v3
+        with:
+          name: CEdev-Windows
+          path: ${{github.workspace}}
+      - name: Download CEdev macOS
+        uses: actions/download-artifact@v3
+        with:
+          name: CEdev-macOS
+          path: ${{github.workspace}}
+      - name: Download CE Libraries
+        uses: actions/download-artifact@v3
+        with:
+          name: clibs
+          path: ${{github.workspace}}
+
+      - name: Rename Artifacts
+        run: |
+          mv CEdev-Linux.tar.gz CEdev-Linux-nightly.tar.gz
+          mv CEdev-Windows.zip CEdev-Windows-nightly.zip
+          mv CEdev-macOS.dmg CEdev-macOS-nightly.dmg
+          mv clibs.8xg clibs-nightly.8xg
+
+      - name: Update nightly release
+        uses: pyTooling/Actions/releaser@main
+        with:
+          tag: nightly
+          rm: true
+          token: ${{secrets.GITHUB_TOKEN}}
+          files: |
+            CEdev-Linux-nightly.tar.gz
+            CEdev-Windows-nightly.zip
+            CEdev-macOS-nightly.dmg
+            clibs-nightly.8xg

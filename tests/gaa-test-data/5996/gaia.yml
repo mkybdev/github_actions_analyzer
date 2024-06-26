@@ -1,0 +1,92 @@
+name: gaia
+on:
+  push:
+    branches:
+      - '**'
+    tags-ignore:
+      - '**'
+    paths-ignore:
+      - '**/CHANGELOG.md'
+  pull_request:
+  workflow_dispatch: 
+
+jobs:          
+  semantic-release:
+    runs-on: ubuntu-latest
+    outputs:
+      new_release_version: ${{ steps.semantic.outputs.new_release_version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Semantic Release
+        uses: cycjimmy/semantic-release-action@v2.5.0
+        id: semantic
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
+          SEMANTIC_RELEASE_PACKAGE: ${{ github.workflow }}
+        with:
+          extra_plugins: |
+            @semantic-release/changelog
+            @semantic-release/git
+            semantic-release-slack-bot
+  build-publish:
+    runs-on: ubuntu-latest
+    needs: semantic-release
+    strategy:
+      matrix:
+        context: [hub, reader, admin]
+    env:
+      IMAGE_NAME_LEGACY: blockstack/${{ github.workflow }}-${{ matrix.context }}
+      IMAGE_NAME: stacksnetwork/${{ github.workflow }}-${{ matrix.context }}
+
+    steps:
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+      - name: Output running variables
+        shell: bash
+        run: |
+          echo "context: $OUTPUT1"
+          echo "tags: $OUTPUT2"
+          echo "Github ref: $OUTPUT3"
+          echo "Will release push variable: $OUTPUT4"
+          echo "Will latest-dev push variable: $OUTPUT5"
+          echo "Is this version tagged: $OUTPUT6"
+        env:
+          OUTPUT1: ${{ matrix.context }}
+          OUTPUT2: ${{ needs.semantic-release.outputs.new_release_version }}
+          OUTPUT3: ${{ github.ref }}
+          OUTPUT4: ${{ needs.semantic-release.outputs.new_release_version != '' }}
+          OUTPUT5: ${{ github.ref == 'refs/heads/master' }}
+          OUTPUT6: ${{ startsWith( github.ref, 'refs/tags/v') }}
+
+      - name: Build/Tag/Push Image - Dockerhub stacksnetwork - latest-dev
+        uses: docker/build-push-action@v3
+        with:
+ #         path: ${{ matrix.context }}
+          context: "{{defaultContext}}:${{ matrix.context }}"
+          # tags now includes the repo name, so must be something like "tags: user/app:latest"
+          # tags: ${{ env.IMAGE_NAME }}:${{ needs.semantic-release.outputs.new_release_version }}
+          tags: ${{ env.IMAGE_NAME }}:latest-dev
+          # Only push as tag "latest-dev" when new code on main branch
+          push: ${{ github.ref == 'refs/heads/master' }}
+
+      - name: Build/Tag/Push Image - Dockerhub stacksnetwork - new release
+        uses: docker/build-push-action@v3
+        if: ${{ startsWith( github.ref, 'refs/tags/v') }}
+        with:
+          context: "{{defaultContext}}:${{ matrix.context }}"
+          tags: ${{ env.IMAGE_NAME }}:${{ github.ref }},latest
+          push: ${{ needs.semantic-release.outputs.new_release_version != '' }}
+          

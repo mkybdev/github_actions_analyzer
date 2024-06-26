@@ -1,0 +1,46 @@
+name: Bazel
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/bazel.yml'
+      - 'Sources/**/*.[ch]'
+      - 'Sources/**/*.swift'
+      - 'Tests/**/*.swift'
+      - 'Tests/**/*.ya?ml'
+      - '**/BUILD'
+      - 'WORKSPACE'
+      - '.bazelrc'
+      - '.bazelversion'
+  pull_request:
+    paths:
+      - '.github/workflows/bazel.yml'
+      - 'Sources/**/*.[ch]'
+      - 'Sources/**/*.swift'
+      - 'Tests/**/*.swift'
+      - 'Tests/**/*.ya?ml'
+      - '**/BUILD'
+      - 'WORKSPACE'
+      - '.bazelrc'
+      - '.bazelversion'
+
+jobs:
+  MacOS:
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v3
+      - name: Apple tests
+        run: bazelisk test //Tests/...
+  Linux:
+    strategy:
+      matrix:
+        tag: ['5.4', '5.5', '5.6', '5.7', '5.8', '5.9', '5.10']
+    runs-on: ubuntu-latest
+    container:
+      image: swift:${{ matrix.tag }}-focal
+    steps:
+      - uses: actions/checkout@v3
+      - uses: bazelbuild/setup-bazelisk@v2
+      - name: Yams tests
+        run: bazel test --test_output=all //Tests:UnitTests

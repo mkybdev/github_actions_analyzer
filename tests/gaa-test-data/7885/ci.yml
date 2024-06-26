@@ -1,0 +1,34 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+
+  tests:
+    name: Tests
+    strategy:
+      fail-fast: false
+      matrix:
+        otp: ['19.3', '21.3', 26]
+    runs-on: ubuntu-20.04
+    container:
+      image: erlang:${{ matrix.otp }}
+    steps:
+    - uses: actions/checkout@v3
+    - run: make
+    - run: rebar3 compile
+    - run: rebar3 xref
+    - run: rebar3 dialyzer
+    - run: rebar3 eunit -v
+    - name: Send to Coveralls
+      if: matrix.otp == 24
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        COVERALLS=true rebar3 as test coveralls send
+        curl -v -k https://coveralls.io/webhook \
+             --header "Content-Type: application/json" \
+             --data '{"repo_name":"$GITHUB_REPOSITORY",
+                      "repo_token":"$GITHUB_TOKEN",
+                      "payload":{"build_num":$GITHUB_RUN_ID,
+                                 "status":"done"}}'

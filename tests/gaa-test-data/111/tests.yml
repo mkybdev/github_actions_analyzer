@@ -1,0 +1,91 @@
+name: Tests
+
+on:
+  pull_request: ~
+  push:
+    branches: [ main ]
+
+  # Allow job to be triggered manually.
+  workflow_dispatch:
+
+# Cancel in-progress jobs when pushing to the same branch.
+concurrency:
+  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+
+  tests:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ ubuntu-20.04 ] # , macos-latest, windows-latest ]
+        python-version: [ "3.7", "3.8", "3.9", "3.10", "3.11" ]
+        mosquitto-version: [ "2.0" ]
+        influxdb-version: [ "1.8" ]
+        grafana-version: [ "7.5.17", "8.5.27", "9.5.7", "10.0.3" ]
+
+    # https://docs.github.com/en/free-pro-team@latest/actions/guides/about-service-containers
+    services:
+
+      influxdb:
+        image: influxdb:${{ matrix.influxdb-version }}
+        ports:
+          - 8083:8083
+          - 8086:8086
+
+      grafana:
+        image: grafana/grafana:${{ matrix.grafana-version }}
+        ports:
+          - 3000:3000
+        env:
+          GF_SECURITY_ADMIN_PASSWORD: admin
+
+      mongodb:
+        image: mongo:5
+        ports:
+          - 27017:27017
+
+    env:
+      OS: ${{ matrix.os }}
+      PYTHON: ${{ matrix.python-version }}
+
+    name: Python ${{ matrix.python-version }}, Grafana ${{ matrix.grafana-version }}, Mosquitto ${{ matrix.mosquitto-version }}, InfluxDB ${{ matrix.influxdb-version }}
+    steps:
+
+      - name: Acquire sources
+        uses: actions/checkout@v3
+
+      - name: Start Mosquitto
+        uses: namoshek/mosquitto-github-action@v1
+        with:
+          version: ${{ matrix.mosquitto-version }}
+          ports: '1883:1883 8883:8883'
+          # certificates: ${{ github.workspace }}/.ci/tls-certificates
+          config: ${{ github.workspace }}/etc/test/mosquitto-no-auth.conf
+          # container-name: 'mqtt'
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+          architecture: x64
+          cache: 'pip'
+          cache-dependency-path: |
+            setup.py
+            requirements-test.txt
+
+      - name: Run tests, with coverage
+        run: |
+          make test-coverage
+
+      - name: Upload coverage results to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: ./coverage.xml
+          flags: unittests
+          env_vars: OS,PYTHON
+          name: codecov-umbrella
+          fail_ci_if_error: false

@@ -1,0 +1,33 @@
+name: release
+on:
+  push:
+    branches: [master]
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GEM_NAME: lock
+    steps:
+      - uses: google-github-actions/release-please-action@v3
+        id: release
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          release-type: ruby
+          package-name: "${{ env.GEM_NAME }}"
+      - uses: actions/checkout@v3
+      - name: install ruby
+        if: "${{ steps.release.outputs.release_created }}"
+        uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+      - name: bundle
+        if: "${{ steps.release.outputs.release_created }}"
+        run: |
+          bundle config unset --local deployment
+          bundle
+      - name: publish gem
+        if: "${{ steps.release.outputs.release_created }}"
+        uses: dawidd6/action-publish-gem@v1
+        with:
+          api_key: "${{secrets.RUBYGEMS_API_KEY}}"
+          github_token: "${{secrets.GITHUB_TOKEN}}"

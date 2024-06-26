@@ -1,0 +1,69 @@
+name: Test gtfs-sql-importer
+
+on: push
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        gtfs: 
+          - "281"
+          - "433"
+        postgis:
+          - "10-2.5"
+          - "12-3.1"
+          - "14-3.1"
+
+    services:
+      database:
+        image: postgis/postgis:${{ matrix.postgis }}
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: password
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 13s
+          --health-timeout 5s
+          --health-retries 5
+          --health-start-period 1s
+    env:
+      PGUSER: postgres
+      PGPASSWORD: password
+      PGHOST: localhost
+      PAGER: cat
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Cache pgtap
+        uses: actions/cache@v2
+        with:
+          key: pgtap-1.2.0
+          path: |
+            pgtap-1.2.0.zip
+            pgtap-1.2.0
+      - name: Download and install pgtap
+        run: |
+          wget --no-clobber https://api.pgxn.org/dist/pgtap/1.2.0/pgtap-1.2.0.zip
+          unzip -u pgtap-1.2.0.zip
+          make -C pgtap-1.2.0 sql/pgtap.sql
+          PGOPTIONS=--search_path=tap,public psql -c "CREATE SCHEMA tap" -f pgtap-1.2.0/sql/pgtap.sql
+      - run: make init drop_constraints drop_notnull
+      - run: make load
+        env:
+          GTFS: tests/data/${{ matrix.gtfs }}.zip
+      - run: make add_constraints add_notnull || echo "could not add constraints"
+        name: Try to add constraints
+      - run: make test
+      - name: Run validity tests
+        run: make check
+        env:
+          FEED_INDEX: 1
+      - name: Run some basic queries
+        run: |
+          psql -c "SELECT feed_index, feed_file FROM gtfs.feed_info"
+          psql -c "SELECT feed_index, trip_id, stop_id, stop_sequence, shape_dist_traveled FROM gtfs.stop_times LIMIT 10"
+          psql -c "SELECT feed_index, shape_id, length FROM gtfs.shape_geoms LIMIT 10"

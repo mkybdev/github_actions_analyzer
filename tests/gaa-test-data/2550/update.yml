@@ -1,0 +1,49 @@
+# This workflow searches for new versions in the em-client version history and updates repository
+
+name: update
+
+# this workflow runs at 02:00 UTC every day
+on:
+  schedule:
+  - cron: "0 2 * * *"
+
+  # Allows to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.WORKFLOW_SECRET }}
+
+      - name: Install automatic updater
+        run: Install-Module -Name AU -Force
+        shell: pwsh
+
+      - name: Install PowerHTML
+        run: Install-Module -Name PowerHTML -Force
+        shell: pwsh
+      
+      - name: Run update script
+        run: |
+          cd em-client
+          $package = .\update.ps1
+        shell: pwsh
+
+      - name: Git config
+        run: |
+            git config --global user.name 'Update Bot'
+            git config --global user.email 'noreply@kluge.io'
+
+      - name: Git commit
+        shell: pwsh
+        run: |
+          $message = "Automatic Update to version " + $package.RemoteVersion
+          if(git status --porcelain ) {
+              git commit -am $message; git push
+          } else {
+              Write-Host "no changes"
+          }

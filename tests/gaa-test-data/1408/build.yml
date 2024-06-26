@@ -1,0 +1,44 @@
+name: build
+
+# Controls when the action will run. Triggers the workflow on push or pull request
+# events but only for the master branch
+on: [push, pull_request]
+
+# A workflow run is made up of one or more jobs that can run
+# sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  build:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-22.04]
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job
+      # can access it
+      - uses: actions/checkout@v4
+
+      - name: setup prerequisites
+        shell: bash
+        run: github-actions/setup.sh
+
+      - name: compile without goffice openssl ofx
+        shell: bash
+        run: |
+          ./autogen.sh
+          github-actions/build.sh --without-goffice --without-openssl --without-ofx --without-libxml2
+          time make --jobs=4
+
+      - name: compile
+        shell: bash
+        run: |
+          github-actions/build.sh
+          time make --jobs=4
+
+      - name: distcheck
+        shell: bash
+        if: matrix.os == 'ubuntu-22.04'
+        run: time make distcheck

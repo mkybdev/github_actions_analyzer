@@ -1,0 +1,34 @@
+name: 'Deploy to Pages'
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy-demo:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: './example/'
+    steps:
+      - name: Checkout 🛎️
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup bun env 🐰
+        uses: oven-sh/setup-bun@v1
+
+      - name: Install dependencies 🚀
+        run: bun install
+
+      - name: Run build 🏁
+        run: bun run build
+
+      - name: Deploy to GitHub Pages 🚀
+        uses: peaceiris/actions-gh-pages@v4.0.0
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./example/dist
+          cname: v-image.netlify.app

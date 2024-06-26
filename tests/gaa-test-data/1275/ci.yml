@@ -1,0 +1,77 @@
+name: Ci
+
+on: push
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@master
+
+      - uses: borales/actions-yarn@v4
+        with:
+          cmd: install
+
+      - name: run
+        run: |
+          yarn run build
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@master
+
+      - uses: borales/actions-yarn@v4
+        name: install
+        with:
+          cmd: install
+
+      - name: run
+        run: yarn run test
+
+      - uses: codecov/codecov-action@v4
+        name: upload
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          flags: unittests
+          files: ./coverage/cobertura-coverage.xml
+          fail_ci_if_error: true
+          verbose: true
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@master
+
+      - uses: borales/actions-yarn@v4
+        with:
+          cmd: install
+
+      - uses: borales/actions-yarn@v4
+        with:
+          cmd: lint
+
+  site:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@master
+
+      - uses: borales/actions-yarn@v4
+        with:
+          cmd: install
+
+      - name: build
+        run: |
+          node ./node_modules/@angular/cli/bin/ng build --base-href /ngx-filesaver/
+          cp ./dist/browser/index.html ./dist/browser/404.html
+          ls ./dist/browser
+
+      - name: deploy-to-gh-pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist/browser

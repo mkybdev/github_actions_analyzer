@@ -1,0 +1,12 @@
+name: 'Trigger: Push'
+
+on: [push]
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v1
+    - name: Shellcheck
+      uses: ludeeus/action-shellcheck@0.1.0

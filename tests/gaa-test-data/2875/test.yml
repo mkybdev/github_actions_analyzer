@@ -1,0 +1,55 @@
+name: Test
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  test:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Ubuntu
+            os: ubuntu-latest
+          - name: "Arch Linux"
+            os: ubuntu-latest
+            container: archlinux:base-devel
+          - name: macOS
+            os: macos-latest
+    defaults:
+      run:
+        shell: bash
+
+    steps:
+
+    - name: Install APT dependencies
+      if: matrix.name == 'Ubuntu'
+      run: |
+        sudo apt-get install -y git build-essential
+
+    - name: Install pacman dependencies
+      if: matrix.name == 'Arch Linux'
+      run: |
+        pacman -Syu --noconfirm
+        pacman -S git --noconfirm
+
+    - uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v2
+      with:
+        python-version: '3.10'
+
+    - name: Install packages
+      run: |
+        NOCONFIRM=true ./install-packages.sh
+
+    - name: Set up dotfiles
+      run: |
+        NOCONFIRM=true ./setup.sh

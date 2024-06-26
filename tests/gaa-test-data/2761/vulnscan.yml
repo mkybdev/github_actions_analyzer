@@ -1,0 +1,46 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+---
+name: vulnscan
+
+on:
+  schedule:
+  - cron: '7 4 * * 4'  # weekly on thursday morning
+  workflow_dispatch:
+
+jobs:
+  scan-released-dockerimages:
+    runs-on: ubuntu-latest
+    env:
+      TRIVY_IGNORE_UNFIXED: 'true'
+      TRIVY_REMOVED_PKGS: 'true'
+    steps:
+    - name: Install Trivy
+      run: |
+        mkdir -p "$GITHUB_WORKSPACE/bin"
+        echo "$GITHUB_WORKSPACE/bin" >> "$GITHUB_PATH"
+        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/master/contrib/install.sh | sh -s -- -b "$GITHUB_WORKSPACE/bin"
+    - name: Download Trivy DB
+      run: |
+        trivy image --download-db-only
+    - name: Scan vulnerabilities using Trivy
+      env:
+        TRIVY_SKIP_DIRS: 'usr/lib/ruby/gems/2.7.0/gems/jaeger-client-0.10.0/crossdock,usr/lib/ruby/gems/2.7.0/gems/jaeger-client-1.0.0/crossdock,usr/lib/ruby/gems/2.7.0/gems/jaeger-client-1.1.0/crossdock'
+      run: |
+        trivy --version
+
+        # semver sorting as per https://stackoverflow.com/a/40391207/2148786
+        ALL_IMAGES="$(curl -s https://hub.docker.com/v2/repositories/cmur2/dyndnsd/tags?page_size=1000 | jq -r '.results[].name | "cmur2/dyndnsd:" + .' | grep -e 'cmur2/dyndnsd:v' | sed '/-/!{s/$/_/}' | sort -r -V | sed 's/_$//')"
+        EXIT_CODE=0
+        set -e
+        for major_version in $(seq 1 10); do
+          for image in $ALL_IMAGES; do
+            if [[ "$image" = cmur2/dyndnsd:v$major_version.* ]]; then
+              echo -e "\nScanning newest patch release $image of major v$major_version...\n"
+              if ! trivy image --skip-db-update --scanners vuln --exit-code 1 "$image"; then
+                EXIT_CODE=1
+              fi
+              break
+            fi
+          done
+        done
+        exit "$EXIT_CODE"

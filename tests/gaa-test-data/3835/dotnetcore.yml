@@ -1,0 +1,30 @@
+name: .NET
+
+on: [push]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: 6.0.x
+        include-prerelease: true
+
+    - name: Build and Publish
+      run: dotnet publish Battery-Commander.Web/Battery-Commander.Web.csproj --configuration Release --output ${{env.DOTNET_ROOT}}/artifacts
+
+    - name: Deploy Azure WebApp
+      uses: Azure/webapps-deploy@v2.2.10
+      if: contains(github.ref, 'main')
+      with:
+        # Publish profile (*.publishsettings) file contents with Web Deploy secrets
+        publish-profile: ${{ secrets.azureWebAppPublishProfile }}
+        # Name of the Azure Web App
+        app-name: Battery-Commander
+        # Path to package or folder. *.zip, *.war, *.jar or a folder to deploy
+        package: ${{env.DOTNET_ROOT}}/artifacts

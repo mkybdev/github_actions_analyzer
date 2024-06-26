@@ -1,0 +1,60 @@
+name: Publish Extension
+
+on:
+  # workflow_run:
+  #   workflows: ["Markup parsing tests"]
+  #   branches: [main]
+  #   types:
+  #     - completed
+  push:
+    branches:
+      - "!*"
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+      # - "*"
+# https://stackoverflow.com/questions/58457140/dependencies-between-workflows-on-github-actions
+# https://docs.github.com/en/actions/reference/events-that-trigger-workflows#workflow_run
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      # https://docs.github.com/en/actions/reference/workflow-commands-for-github-actions
+      - name: Get release version
+      # https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions#setting-an-output-parameter
+        run: echo "version=${GITHUB_REF#refs/*/}" >> "$GITHUB_OUTPUT"
+        id: release-version
+      - name: Install Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 20.x
+      - name: Install Dependencies
+        run: npm ci
+      - name: Build extension package
+        run: npm run build
+      - name: Build checksum
+        run: sha512sum confluence-markup-${{ steps.release-version.outputs.version }}.vsix > confluence-markup-${{ steps.release-version.outputs.version }}.vsix.sha512
+      - name: Create release notes for version ${{ steps.release-version.outputs.version }}
+        # run: npm run --silent changelog > RELEASE_NOTES_${{ steps.release-version.outputs.version }}.md
+        run: |
+          if [ $((grep "$(grep -m1 'version' package.json | cut -d '"' -f 4)" -n CHANGELOG.md || echo 0)| head -1 | cut -d ':' -f 1) -eq 3 ]; then \
+            awk '/##/{++c;next} c==1' CHANGELOG.md | awk '!/^$/'; \
+          else \
+            >&2 echo 'Unchecked version'; \
+            echo 1; \
+          fi | tee RELEASE_NOTES_${{ steps.release-version.outputs.version }}.md
+      # https://github.com/ncipollo/release-action
+      - name: Create github release
+        uses: ncipollo/release-action@v1
+        with:
+          name: ${{ steps.release-version.outputs.version }}
+          artifacts: "confluence-markup-${{ steps.release-version.outputs.version }}.vsix,confluence-markup-${{ steps.release-version.outputs.version }}.vsix.sha512"
+          # artifactContentType: application/zip
+          bodyFile: "RELEASE_NOTES_${{ steps.release-version.outputs.version }}.md"
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Publish to Visual Studio Marketplace
+        run: ./node_modules/.bin/vsce publish -p ${{ secrets.VSCE_PAT }}
+      - name: Publish to Open VSX Registry
+        run: ./node_modules/.bin/ovsx publish -p ${{ secrets.OVSX_PAT }}

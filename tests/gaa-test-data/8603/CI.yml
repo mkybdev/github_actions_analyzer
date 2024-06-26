@@ -1,0 +1,105 @@
+name: CI
+on:
+  - pull_request
+  - push
+
+# Due to rate-limits in `npm run get.servers`
+env:
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+jobs:
+  Test:
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    name: ${{ matrix.os }} - Atom ${{ matrix.atom_channel }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+          - windows-latest
+        atom_channel: [stable]
+    steps:
+      - uses: actions/checkout@v2
+      - uses: UziTech/action-setup-atom@v1
+        with:
+          channel: ${{ matrix.atom_channel }}
+
+      - uses: actions/setup-node@v2
+        with:
+          node-version: 12
+
+      - uses: pnpm/action-setup@master
+        with:
+          version: latest
+
+      - name: Test production installation
+        run: apm install --production
+
+      - name: Build
+        run: |
+          pnpm install
+          ./node_modules/.bin/atom-package-deps .
+
+      - name: Run tests 👩🏾‍💻
+        run: npm run test
+
+  Lint:
+    if: "!contains(github.event.head_commit.message, '[skip ci]')"
+    runs-on: ubuntu-latest
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+      - name: Commit lint ✨
+        if: "!contains(github.event.head_commit.message, 'Prepare v')"
+        uses: wagoid/commitlint-github-action@v2
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Format ✨
+        run: npm run test.format
+
+      - name: Lint ✨
+        run: npm run test.lint
+
+  Release:
+    needs: [Test, Lint]
+    if: github.ref == 'refs/heads/main' &&
+      github.event.repository.fork == false
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: atom-community/action-setup-atom@v1
+      - uses: actions/setup-node@v2
+        with:
+          node-version: 12
+
+      - uses: pnpm/action-setup@master
+        with:
+          version: latest
+
+      - name: Build and Commit
+        run: |
+          pnpm install
+          pnpm run clean
+          pnpm run get.servers
+          pnpm run build-commit
+
+      - name: Release 🎉
+        uses: cycjimmy/semantic-release-action@v2
+        with:
+          extends: |
+            @semantic-release/apm-config
+          semantic_version: 16
+          branches: |
+            [
+              'main'
+            ]
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ATOM_ACCESS_TOKEN: ${{ secrets.ATOM_ACCESS_TOKEN  }}

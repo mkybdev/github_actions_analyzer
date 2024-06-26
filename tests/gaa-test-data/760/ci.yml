@@ -1,0 +1,57 @@
+name: Continuous Integration
+
+on:
+  push:
+  pull_request:
+    branches: [ main ]
+  release:
+    types: [ published ]
+
+jobs:
+
+  test:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python 3.10
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    - name: Install pip dependencies
+      run: |
+        pip install --upgrade pip
+        pip install coveralls
+    - name: Run tests
+      env:
+        DOCKER_IMAGE: hepdata/hepdata-converter
+      run: |
+        export CURRENT_PATH=`pwd`
+        docker run -v $CURRENT_PATH:$CURRENT_PATH hepdata/hepdata-converter /bin/bash -c "cd $CURRENT_PATH && pip install -e '.[tests]' && hepdata-converter-ws -v && coverage run -m unittest discover hepdata_converter_ws/testsuite 'test_*'"
+    - name: Run coveralls
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        COVERALLS_SERVICE_NAME: github
+      run: |
+        coveralls
+
+  deploy:
+    needs: test
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/hepdata-converter-ws
+    permissions:
+      id-token: write  # IMPORTANT: this permission is mandatory for trusted publishing
+    steps:
+    - uses: actions/checkout@v4
+    - name: Build PyPI package
+      env:
+        DOCKER_IMAGE: hepdata/hepdata-converter
+      run: |
+        export CURRENT_PATH=`pwd`
+        docker run -v $CURRENT_PATH:$CURRENT_PATH $DOCKER_IMAGE /bin/bash -c "cd $CURRENT_PATH && pip install wheel && python setup.py sdist bdist_wheel"
+    - name: Publish distribution to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1

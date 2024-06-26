@@ -1,0 +1,169 @@
+name: Build
+
+on: [push, pull_request]
+
+#
+# Some repeated stuff
+#
+env:
+  sanitizer_autotools_flags: '
+    CFLAGS="-fsanitize=address,leak"
+    LDFLAGS="-fsanitize=address,leak"'
+
+  cmake_sanitizer_flags: "
+    -DCMAKE_C_FLAGS=-fsanitize=address,leak
+    -DCMAKE_CXX_FLAGS=-fsanitize=address,leak
+    -DCMAKE_SHARED_LINKER_FLAGS=-fsanitize=address,leak"
+
+  cmake_extra_flags: "
+    -Dunspecified_server=ON
+    -Dblocking_tcp_connections=ON"
+
+jobs:
+  # Linux builds
+  linux:
+    name: Build (${{ matrix.os }}) - ${{ matrix.conf }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-18.04, ubuntu-20.04]
+        conf: [Debug, Release]
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v2
+      - name: Configure
+        run: >
+          cmake
+          -S .
+          -B build
+          -DCMAKE_BUILD_TYPE=${{ matrix.conf }}
+          -DBUILD_TESTING=ON
+          -DDOWNLOAD_AND_BUILD_DEPS=ON
+          -Dopen_ssl=ON
+          ${{ env.cmake_extra_flags }}
+      - name: Build
+        run: cmake --build build
+      - name: Test
+        run: |
+          cd build
+          ctest --output-on-failure
+          cd ..
+      - name: Debug output
+        run: cmake -DBUILD_DIR=build -P cmake/post-test.cmake
+  # Windows Visual Studio builds
+  windows-msvc:
+    name: Build (${{ matrix.os }})  - ${{ matrix.conf }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-2016, windows-2019, macos-latest]
+        conf: [Debug, Release]
+      fail-fast: false
+    steps:
+      - uses: actions/checkout@v2
+      - name: Configure
+        run: >
+          cmake
+          -S .
+          -B build
+          -DCMAKE_BUILD_TYPE=${{ matrix.conf }}
+          -DBUILD_TESTING=ON
+          -DDOWNLOAD_AND_BUILD_DEPS=ON
+          ${{ env.cmake_extra_flags }}
+      - name: Build
+        run: cmake --build build --config ${{ matrix.conf }}
+      - name: Test
+        run: |
+          cd build
+          ctest --output-on-failure -C ${{ matrix.conf }}
+          cd ..
+      - name: Debug output
+        run: cmake -DBUILD_DIR=build -P cmake/post-test.cmake
+  # Windows msys2 builds
+  windows-msys2:
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        conf: [Debug, Release]
+        msystem: [MINGW64, MINGW32]
+    name: Build (${{ matrix.msystem }}) - ${{ matrix.conf }}
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v2
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: ${{ matrix.msystem }}
+          update: true
+          pacboy: cc:p cmake:p gtest:p ninja:p
+      - name: Configure
+        run: >
+          cmake
+          -S .
+          -B build
+          -DCMAKE_BUILD_TYPE=${{ matrix.conf }}
+          -DBUILD_TESTING=ON
+          -DDOWNLOAD_AND_BUILD_DEPS=ON
+          ${{ env.cmake_extra_flags }}
+      - name: Build
+        run: cmake --build build
+      - name: Test
+        run: |
+          cd build
+          PATH=$PWD/ixml:$PWD/upnp:$PATH ctest --output-on-failure
+          cd ..
+      - name: Debug output
+        run: cmake -DBUILD_DIR=build -P cmake/post-test.cmake
+  # Linux sanitizer builds
+  build_asan:
+    name: Sanitizer build (ubuntu-20.04) - ${{ matrix.tool }}
+    runs-on: ubuntu-20.04
+    strategy:
+      matrix:
+        tool: [autotools, cmake]
+        conf: [Debug]
+    steps:
+    - uses: actions/checkout@v1
+    - name: bootstrap and configure (autotools)
+      if: ${{ matrix.tool == 'autotools' }}
+      run: >
+        ./bootstrap
+
+        ./configure
+        --enable-debug
+        ${{ env.sanitizer_autotools_flags }}
+    - name: configure (cmake)
+      if: ${{ matrix.tool == 'cmake' }}
+      run: >
+        cmake
+        -S .
+        -B build
+        -DBUILD_TESTING=ON
+        -DCMAKE_BUILD_TYPE=${{ matrix.conf }}
+        -DDOWNLOAD_AND_BUILD_DEPS=ON
+        -Dopen_ssl=ON
+        ${{ env.cmake_sanitizer_flags }}
+        ${{ env.cmake_extra_flags }}
+    - name: build (autotools)
+      if: ${{ matrix.tool == 'autotools' }}
+      run: make
+    - name: build (cmake)
+      if: ${{ matrix.tool == 'cmake' }}
+      run: cmake --build build
+    - name: test ixml (autotools)
+      if: ${{ matrix.tool == 'autotools' }}
+      run: >
+        cd ixml && make check ||
+        (cat test-suite.log && exit 1)
+    - name: test upnp (autotools)
+      if: ${{ matrix.tool == 'autotools' }}
+      run: >
+        cd upnp && make check && cat test_init.log ||
+        (cat test-suite.log test_init.log && exit 1)
+    - name: ctest (cmake)
+      if: ${{ matrix.tool == 'cmake' }}
+      run: |
+          cd build
+          ctest --output-on-failure

@@ -1,0 +1,61 @@
+---
+name: Django CI
+
+on: [push, pull_request]
+
+defaults:
+  run:
+    working-directory: src
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres
+        env:
+          POSTGRES_DB: smokeyfeet
+          POSTGRES_USER: smokeyfeet
+          POSTGRES_PASSWORD: smokeyfeet
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+          cache: 'pip'
+          cache-dependency-path: |
+            **/requirements.txt
+            **/requirements-dev.txt
+
+      - name: Update pip/pip-tools
+        run: |
+          python -m pip install --upgrade pip setuptools wheel pip-tools
+
+      - name: Install dependencies
+        run: |
+          pip-sync requirements.txt requirements-dev.txt
+
+      - name: Run linters
+        continue-on-error: true
+        run: |
+          make lint
+
+      - name: Run tests
+        env:
+          SF_DB_URL: postgres://smokeyfeet:smokeyfeet@localhost:5432/smokeyfeet
+          SF_DEFAULT_FROM_EMAIL: foo@example.com
+          SF_EMAIL_BACKEND: django.core.mail.backends.dummy.EmailBackend
+          SF_MOLLIE_API_KEY: test_XYZ
+          SF_SECRET_KEY: my-ci-secret-key
+        run: |
+          make test

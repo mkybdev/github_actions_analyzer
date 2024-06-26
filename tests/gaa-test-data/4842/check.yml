@@ -1,0 +1,143 @@
+name: check
+on:
+  workflow_dispatch:
+  push:
+    branches: ["main"]
+    tags-ignore: ["**"]
+  pull_request:
+  schedule:
+    - cron: "0 8 * * *"
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test ${{ matrix.py }} - ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        py:
+          - "pypy3.9" # ahead to start it earlier because takes longer
+          - "3.12"
+          - "3.11"
+          - "3.10"
+          - "3.9"
+          - "3.8"
+        os:
+          - ubuntu-22.04
+          - windows-2022
+          - macos-12
+
+    steps:
+      - name: Setup python for tox
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Pick environment to run
+        run: |
+          import codecs; import os
+          py = "${{ matrix.py }}"
+          py = "test.{}".format(py if py.startswith("pypy") else f"py{py}")
+          print(f"Picked {py}")
+          with codecs.open(os.environ["GITHUB_ENV"], mode="a", encoding="utf-8") as file_handler:
+              file_handler.write("FORCE_COLOR=1\n")
+              file_handler.write(f"ENV={py}\n")
+        shell: python
+      - name: Install Hatch
+        uses: pypa/hatch@install
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Setup python for test ${{ matrix.py }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.py }}
+      - name: Setup test environment
+        run: |
+          hatch -v env create ${ENV}
+          hatch run ${ENV}:pip freeze
+        shell: bash
+      - name: Run test suite
+        run: hatch -v run ${ENV}:run
+        env:
+          PYTEST_ADDOPTS: "-vv --durations=20"
+          CI_RUN: "yes"
+        shell: bash
+      - name: Rename coverage report file
+        run: |
+          import os; import sys;
+          os.rename(f"report{os.sep}.coverage.${{ matrix.py }}", f"report{os.sep}.coverage.${{ matrix.py }}-{sys.platform}")
+        shell: python
+      - name: Upload coverage data
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.os }}-${{ matrix.py }}
+          path: "report/.coverage.*"
+          retention-days: 3
+
+  coverage:
+    name: Combine coverage
+    runs-on: ubuntu-22.04
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Let us have colors
+        run: echo "FORCE_COLOR=true" >> "$GITHUB_ENV"
+      - name: Install Hatch
+        uses: pypa/hatch@install
+      - name: Setup coverage tool
+        run: |
+          hatch -v env create coverage
+          hatch run coverage:pip freeze
+      - name: Download coverage data
+        uses: actions/download-artifact@v4
+        with:
+          path: report
+          pattern: coverage-*
+          merge-multiple: true
+      - name: Combine and report coverage
+        run: hatch run coverage:run
+      - name: Upload HTML report
+        uses: actions/upload-artifact@v4
+        with:
+          name: html-report
+          path: report/html
+
+  check:
+    name: ${{ matrix.env.name }} - ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-22.04
+          - windows-2022
+        env:
+          - {"name": "default", "target": "show"}
+          - {"name": "type", "target": "run"}
+          - {"name": "docs", "target": "build"}
+          - {"name": "readme", "target": "run"}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Setup Python "3.12"
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Hatch
+        uses: pypa/hatch@install
+      - name: Setup ${{ matrix.env.name }}
+        run: |
+          hatch -v env create ${{ matrix.env.name }}
+          hatch run ${{ matrix.env.name }}:pip freeze
+      - name: Run ${{ matrix.env.name }}
+        run: hatch -v run ${{ matrix.env.name }}:${{ matrix.env.target }}

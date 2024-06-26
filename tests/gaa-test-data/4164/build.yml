@@ -1,0 +1,350 @@
+# SPDX-FileCopyrightText: 2023 James R. Barlow
+# SPDX-License-Identifier: MPL-2.0
+
+name: Build and upload to PyPI
+
+on:
+  push: {}
+  pull_request: {}
+
+# For musllinux support, see note in pyproject.toml
+
+jobs:
+  wheels_linux:
+    name: ${{ matrix.platform }}
+    runs-on: ubuntu-22.04
+    env:
+      CIBW_BUILD: "*-${{ matrix.platform }}"
+    strategy:
+      matrix:
+        platform: [manylinux_x86_64, musllinux_x86_64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v2.19.1
+
+      - name: Upload built wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.platform }}
+          path: ./wheelhouse/*.whl
+          if-no-files-found: error
+
+  wheels_linux_prerelease_python:
+    name: ${{ matrix.platform }} - pre-release
+    runs-on: ubuntu-22.04
+    continue-on-error: true
+    env:
+      CIBW_BUILD: "cp313*-${{ matrix.platform }}"
+      CIBW_PRERELEASE_PYTHONS: true
+    strategy:
+      matrix:
+        platform: [manylinux_x86_64]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install apt packages for source build of Pillow for Python 3.13
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            python3-dev \
+            python3-setuptools \
+            libtiff5-dev \
+            libjpeg8-dev \
+            libopenjp2-7-dev \
+            zlib1g-dev \
+            libfreetype6-dev \
+            liblcms2-dev \
+            libwebp-dev \
+            tcl8.6-dev \
+            python3-tk \
+            libharfbuzz-dev \
+            libfribidi-dev \
+            libxcb1-dev
+
+      - name: Build and test wheels (without upload)
+        uses: pypa/cibuildwheel@v2.19.1
+
+  wheels_linux_arm:
+    runs-on: ubuntu-22.04
+    strategy:
+      matrix:
+        platform: [manylinux_musllinux_arm64]
+    steps:
+      - name: Waiting for Cirrus CI
+        uses: lewagon/wait-on-check-action@v1.3.4
+        if: github.event_name != 'pull_request'
+        with:
+          ref: ${{ github.ref || github.sha }}
+          check-regexp: '^linux arm64 Cirrus'
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          wait-interval: 60
+
+      # When doing a release build and queried, GitHub Actions returns the build
+      # status for both the branch and tag, even when only one is queried. This means
+      # on release, we get two successful builds from Cirrus CI, and the step above will
+      # pass on whichever succeeds first. So we sit here and wait for the second one if
+      # it hasn't finished yet. Cirrus CI might decide to run them sequentially so we
+      # could be waiting for up to a whole build time. Allow one hour.
+      # The particular curl query used here does ensure we get the status for the
+      # appropriate branch/tag build.
+      # An alternative would be creating explicit tasks for the branch and tag builds
+      # on both Cirrus CI and GitHub Actions, but that would be a lot of duplication.
+      # Another alternative would be to fork and improve wait-on-check-action to allow
+      # waiting our specific check.
+      - name: Download artifacts
+        run: |
+          retries=120
+          while [ $retries -gt 0 ]; do
+            sleep 30
+            curl --fail -L https://api.cirrus-ci.com/v1/artifact/github/${{ github.repository }}/wheel_linux_arm/wheels.zip?branch=${{ github.ref_name }} -o wheels.zip && break
+            retries=$((retries - 1))
+            echo "Retrying... (retries left: $retries)"
+          done
+          unzip wheels.zip
+
+      - name: Upload built wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.platform }}
+          path: ./wheelhouse/*.whl
+          if-no-files-found: error
+
+  wheels_macos:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    env:
+      CIBW_BUILD: "*"
+      CIBW_TEST_SKIP: "cp38-macosx_*:arm64"  # cibuildwheel cannot test Python 3.8 on ARM64
+
+    strategy:
+      matrix:
+        # macos-14 is Apple silicon and we configure it to build only arm64 wheels.
+        # macos-13 and lower are an Intel runners and we configure them to build
+        # only x86_64 wheels.
+        # We build on macos-12 because it does a better job of forward compatible
+        # builds with macos-13 than vice versa. macos-11 is end of life and dropped by
+        # both Apple and Homebrew, so it probably works but takes forever to build.
+        # See notes in build.rst.
+        include:
+          - os: macos-12
+            os_arch: macos-x86_64
+          - os: macos-14
+            os_arch: macos-arm64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v2.19.1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os_arch }}
+          path: ./wheelhouse/*.whl
+
+  cross_check_macos:
+    needs: [wheels_macos]
+    name: Test Python x86_64 wheels on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-13]
+        python: ["3.8"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        name: Install Python
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Download x86_64 wheels
+        uses: actions/download-artifact@v4
+        with:
+          name: wheels-macos-x86_64  # download wheels for x86_64
+          path: wheelhouse
+
+      - name: Output downloads
+        run: |
+          ls -l wheelhouse
+
+      - name: Install wheels
+        run: |
+          WHEEL=wheelhouse/pikepdf*cp38*macos*x86_64.whl
+          python -m pip install $WHEEL
+          python -c "import pikepdf; print(pikepdf.__version__)"
+
+  wheels_windows:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    env:
+      CIBW_BUILD: "*-${{ matrix.platform }}"
+      CIBW_ENVIRONMENT: >-
+        INCLUDE="$INCLUDE;d:\\qpdf\\include"
+        LIB="$LIB;d:\\qpdf\\lib"
+        LIBPATH="$LIBPATH;d:\\qpdf\\lib"
+    strategy:
+      matrix:
+        os: [windows-2019]
+        platform: [win_amd64]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        name: Install Python
+        with:
+          python-version: "3.8"
+
+      - name: Install tomli and read environment from pyproject.toml
+        run: |
+          python -m pip install tomli
+          python build-scripts/environ-from-pyproject.py >> $env:GITHUB_ENV
+          dir env:
+
+      - name: Download QPDF
+        run: |
+          build-scripts/win-download-qpdf.ps1 $env:QPDF_VERSION ${{ matrix.platform }}
+
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v2.19.1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.platform }}
+          path: ./wheelhouse/*.whl
+
+  sdist:
+    name: source distribution
+    runs-on: ubuntu-20.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        name: Install Python
+        with:
+          python-version: "3.10"
+
+      - name: Install apt packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake jbig2dec lcov libexempi8 poppler-utils
+
+      - name: Install tomli and read environment from pyproject.toml
+        run: |
+          python -m pip install tomli
+          python build-scripts/environ-from-pyproject.py >> $GITHUB_ENV
+
+      - name: Download QPDF
+        run: build-scripts/posix-download-qpdf.bash $QPDF_MIN_VERSION
+
+      - name: Add /usr/local/lib to dynamic linker path
+        run: echo "/usr/local/lib" | sudo tee /etc/ld.so.conf.d/local-lib.conf
+
+      - name: Build QPDF
+        run: build-scripts/posix-build-sdist-deps.bash
+
+      - name: Build sdist
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade setuptools wheel build
+          python -m build --sdist
+
+      - name: Install and test sdist (isolated)
+        run: |
+          python -m venv v
+          source v/bin/activate
+          SDIST=dist/*.tar.gz
+          SDIST_EXPANDED=$(echo -n $SDIST)
+          python -m pip install ${SDIST_EXPANDED}[test]  # yes this works
+          python -m pytest -nauto
+          deactivate
+
+      - name: Install local project as editable
+        run: |
+          # pip install with --coverage is broken so we have to do it this horrible hacky way
+          # https://github.com/pypa/setuptools/issues/3025
+          # Install it with pip, or else dependencies won't be resolved (*sigh*)
+          python -m pip install -e .[test]
+          # Nuke the C++ extension but leave the Python install intact
+          rm -rf build/ src/pikepdf/_core*.so
+          # Rebuild the extension inplace with coverage
+          env CFLAGS="--coverage" CXXFLAGS="--coverage" python setup.py build_ext --inplace
+          python -m pytest -nauto --cov-report xml --cov=src
+
+      - name: Generate C++ coverage reports
+        run: |
+          lcov --no-external --capture --directory . --output-file cpp_coverage_all.info
+          lcov --remove cpp_coverage_all.info '*/pybind11/*' -o cpp_coverage.info
+          rm cpp_coverage_all.info
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        with:
+          files: ./coverage.xml,./cpp_coverage.info
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+
+  upload_pypi:
+    needs: [wheels_linux, wheels_macos, wheels_windows, wheels_linux_arm, sdist]
+    runs-on: ubuntu-latest
+    environment:
+      name: release
+      url: https://pypi.org/p/pikepdf
+    permissions:
+      id-token: write
+    # upload to PyPI on every tag starting with 'v'
+    if: github.event_name == 'push' && startsWith(github.event.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: wheels-*
+          merge-multiple: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  create_release:
+    name: Create GitHub release
+    needs: [wheels_linux, wheels_macos, wheels_windows, wheels_linux_arm, sdist]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.event.ref, 'refs/tags/v')
+    permissions:
+      # Required to create a release
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: wheels-*
+          merge-multiple: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: sdist
+          path: dist
+
+      - name: Create Release
+        id: create-release
+        uses: shogo82148/actions-create-release@v1
+
+      - name: Upload Assets
+        uses: shogo82148/actions-upload-release-asset@v1
+        with:
+          upload_url: ${{ steps.create-release.outputs.upload_url }}
+          asset_path: |
+            ./dist/*.whl
+            ./dist/*.tar.gz

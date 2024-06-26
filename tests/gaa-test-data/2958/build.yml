@@ -1,0 +1,125 @@
+name: Install and Test
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  build-linux:
+    defaults:
+      run:
+        # Ensures environment gets sourced right
+        shell: bash -l {0}  
+    name: Python (${{ matrix.PYTHON_VERSION }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        PYTHON_VERSION: ["3.9", "3.11", "3.12"]
+    env:
+      PYTHON_VERSION: ${{ matrix.PYTHON_VERSION }}
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Add /etc/hosts entries
+      run: |
+        set -x
+        sudo cp /etc/hosts /etc/hosts.save
+        cat .github/workflows/etchosts.txt | sudo tee -a /etc/hosts
+
+    # setup conda-forge with micromamba
+    - name: Setup Python 
+      uses: mamba-org/setup-micromamba@v1
+      with:
+        environment-file: environment.yml
+        condarc: |
+          channels:
+            - conda-forge
+            - defaults
+        create-args: >-
+          python=${{ env.PYTHON_VERSION }}
+        environment-name: prod
+        cache-environment: true
+
+    - name: Setup Postgres
+      run: |
+        git clone --depth 1 https://github.com/akrherz/iem-database.git database
+        git clone --depth 1 https://github.com/akrherz/ci_tooling.git .ci_tooling
+        . .ci_tooling/postgres.sh
+        cd database; sh bootstrap.sh
+        python schema_manager.py
+
+    - name: Setup Memcached
+      run: |
+        . .ci_tooling/memcached.sh
+
+    - name: Install and Test
+      run: |
+        set -e
+        set -x
+        python -m pip install . -vv --no-deps
+        cp pywwa_settings.json-example pywwa_settings.json
+        # This is a bit brittle, but loads some data
+        python util/ugcs_update.py fz08mr23 2023 3 08
+        python util/merge_hvtec_nwsli.py hvtec.list.20240221.csv
+        python util/copy_iem_network.py MN_ASOS
+        python util/copy_iem_network.py NY_COOP
+        python util/copy_iem_network.py NWSCLI
+        python util/copy_iem_network.py NEXRAD
+        python util/copy_iem_network.py TWDR
+        sh util/run_examples.sh
+        # get pqinsert available as a dummy command
+        export PATH=$PATH:$(pwd)/tests/bin
+        python -m pytest -vv --cov=pywwa --cov-report=xml
+
+    - name: Run console scripts without database
+      run: |
+        set -x
+        set -e
+        sudo systemctl stop postgresql@15-main.service
+        sudo cp /etc/hosts.save /etc/hosts
+        pywwa-parse-afos-dump --help
+        pywwa-parse-aviation --help
+        pywwa-parse-bufr-surface --help
+        pywwa-parse-cf6 --help
+        pywwa-parse-cli --help
+        pywwa-parse-dsm --help
+        pywwa-parse-dsm2afos --help
+        pywwa-parse-ero --help
+        pywwa-parse-fake-afos-dump --help
+        pywwa-parse-fd --help
+        pywwa-parse-ffg --help
+        pywwa-parse-gairmet --help
+        pywwa-parse-generic --help
+        pywwa-parse-gini2gis --help
+        pywwa-parse-hml --help
+        pywwa-parse-lsr --help
+        pywwa-parse-mcd --help
+        pywwa-parse-metar --help
+        pywwa-parse-mos --help
+        pywwa-parse-nexrad3-attr --help
+        pywwa-parse-nldn --help
+        pywwa-parse-pirep --help
+        pywwa-parse-rr7 --help
+        pywwa-parse-scp --help
+        pywwa-parse-shef --help
+        pywwa-parse-spc --help
+        pywwa-parse-spe --help
+        pywwa-parse-split-mav --help
+        pywwa-parse-sps --help
+        pywwa-parse-taf --help
+        pywwa-parse-vtec --help
+        pywwa-parse-watch --help
+        pywwa-parse-xteus --help
+        pywwa-spammer --help
+
+    - name: Upload coverage to Codecov
+      if: ${{ env.PYTHON_VERSION == '3.12' }}
+      uses: codecov/codecov-action@v4
+      env:
+        CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      with:
+        file: coverage.xml
+        fail_ci_if_error: true

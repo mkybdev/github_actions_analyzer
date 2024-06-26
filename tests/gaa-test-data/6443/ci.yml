@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  pull_request: {}
+  push: { branches: [ master ] }
+
+jobs:
+  build:
+    runs-on: ubuntu-18.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: "default", javaVersion: 8 }
+          - { name: "default", javaVersion: 17 }
+          - { name: "over TCP", dockerHost: "tcp://127.0.0.1:2375", javaVersion: 8 }
+          - { name: "Docker 18.06.3", dockerVersion: "18.06.3~ce~3-0~ubuntu", javaVersion: 8 }
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Set up JDK
+        uses: actions/setup-java@v1
+        with:
+          java-version: ${{matrix.javaVersion}}
+      - name: Configure Docker
+        env:
+          DOCKER_VERSION: ${{matrix.dockerVersion}}
+          DOCKER_HOST: ${{matrix.dockerHost}}
+        run: .ci/setup_docker.sh
+      - name: Build with Maven
+        env:
+          DOCKER_HOST: ${{matrix.dockerHost}}
+        run: |
+          [[ -z "$DOCKER_HOST" ]] && unset DOCKER_HOST
+          ./mvnw --no-transfer-progress verify

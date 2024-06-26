@@ -1,0 +1,96 @@
+name: Benchmarks
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths-ignore:
+      - 'docs/**'
+      - 'devtools/**'
+  workflow_dispatch:
+    inputs:
+      debug_enabled:
+        type: boolean
+        description: '(https://github.com/marketplace/actions/debugging-with-tmate)'
+        required: false
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Enable tmate debugging of manually-triggered workflows if the input option was provided
+      - name: Setup tmate session
+        uses: mxschmitt/action-tmate@v3
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.debug_enabled }}
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.9
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r devtools/dev-requirements.txt
+      - name: Benchmark with pytest-benchmark
+        run: |
+          pwd
+          lscpu
+          cd tests/benchmarks
+          python -m pytest benchmark_cpu_small.py -vv \
+            --benchmark-save='Latest_Commit' \
+            --durations=0 \
+            --benchmark-save-data
+      - name: Checkout current master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+          clean: false
+      - name: Checkout benchmarks from PR head
+        run: git checkout ${{ github.event.pull_request.head.sha }} -- tests/benchmarks
+      - name: Benchmark with pytest-benchmark
+        run: |
+          pwd
+          lscpu
+          cd tests/benchmarks
+          python -m pytest benchmark_cpu_small.py -vv \
+            --benchmark-save='master' \
+            --durations=0 \
+            --benchmark-save-data
+      - name: put benchmark results in same folder
+        run: |
+          pwd
+          cd tests/benchmarks
+          find .benchmarks/ -type f -printf "%T@ %p\n" | sort -n | cut -d' ' -f 2- | tail -n 1 > temp1
+          find .benchmarks/ -type f -printf "%T@ %p\n" | sort -n | cut -d' ' -f 2- | tail -n 2 | head -n 1 > temp2
+          t1=$(cat temp1)
+          t2=$(cat temp2)
+          mkdir compare_results
+          cp $t1 compare_results
+          cp $t2 compare_results
+      - name: Compare latest commit results to the master branch results
+        run: |
+          pwd
+          cd tests/benchmarks
+          python compare_bench_results.py
+          cat commit_msg.txt
+      - name: comment PR with the results
+        uses: thollander/actions-comment-pull-request@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          filePath: tests/benchmarks/commit_msg.txt
+          comment_tag: benchmark
+      - name: Upload benchmark data
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark_artifact
+          path: tests/benchmarks/.benchmarks

@@ -1,0 +1,112 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+
+  linux:
+    strategy:
+      matrix:
+        os: [ubuntu-20.04, ubuntu-22.04]
+        java-version: [11, 17]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+        with:
+          submodules: 'recursive'
+
+      - name: Setup JDK ${{ matrix.java-version }}
+        uses: actions/setup-java@v1
+        with:
+          java-version: ${{ matrix.java-version }}
+
+      - name: Run Checkstyle
+        run: ./gradlew checkstyle
+
+      - name: Run PMD checks
+        run: ./gradlew pmd
+
+      - name: Assemble Workcraft
+        run: ./gradlew assemble
+
+      - name: Install clasp
+        run: sudo apt-get install clasp
+
+      - name: Run unit tests
+        uses: GabrielBB/xvfb-action@v1
+        with:
+          run: ./gradlew test
+
+      - name: Run integration tests
+        uses: GabrielBB/xvfb-action@v1
+        with:
+          run: ./ci/run.sh
+
+  osx:
+    strategy:
+      matrix:
+        os: [macos-10.15]
+        java-version: [11, 17]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+        with:
+          submodules: 'recursive'
+
+      - name: Setup JDK ${{ matrix.java-version }}
+        uses: actions/setup-java@v1
+        with:
+          java-version: ${{ matrix.java-version }}
+
+      - name: Assemble Workcraft
+        run: ./gradlew assemble
+
+      - name: Install clasp
+        run: brew install clasp
+
+      - name: Run unit tests
+        run: ./gradlew test
+
+      - name: Run integration tests (without 32-bit backends)
+        uses: GabrielBB/xvfb-action@v1
+        with:
+          run: ./ci/run.sh exec help workspace ci/export-* ci/import-* ci/property-* ci/statistics-*
+
+  windows:
+    strategy:
+      matrix:
+        os: [windows-2019]
+        java-version: [11, 17]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v2
+        with:
+          submodules: 'recursive'
+
+      - name: Setup JDK ${{ matrix.java-version }}
+        uses: actions/setup-java@v1
+        with:
+          java-version: ${{ matrix.java-version }}
+
+      - name: Assemble Workcraft
+        run: ./gradlew assemble
+
+      - name: Run unit tests
+        run: ./gradlew test
+
+      - name: Run integration tests
+        run: ./ci/run.sh
+        shell: bash
+
+#      - name: Setup tmate session for remote debugging in case of failure
+#        if: ${{ failure() }}
+#        uses: mxschmitt/action-tmate@v3

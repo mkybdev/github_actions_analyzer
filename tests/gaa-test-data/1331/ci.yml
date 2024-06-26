@@ -1,0 +1,27 @@
+name: CI
+
+on: [push]
+
+jobs:
+  phpcs:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+    - name: Install Composer dependencies
+      run: composer install --prefer-dist
+    - name: Check code style
+      run: php vendor/bin/phpcs --standard=PSR2 -np src
+
+  phpspec:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        php: [7.2, 7.3, 7.4]
+    steps:
+    - uses: actions/checkout@v1
+    - name: Validate Composer files
+      run: composer validate --no-check-all --strict
+    - name: Install Composer dependencies
+      run: composer install --prefer-dist --no-progress --no-suggest
+    - name: Run tests
+      run: php${{ matrix.php }} vendor/bin/phpspec run

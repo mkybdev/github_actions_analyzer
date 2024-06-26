@@ -1,0 +1,42 @@
+name: Build
+
+on:
+  workflow_call:
+
+jobs:
+  build:
+    name: Build NuGet Package
+    runs-on: ubuntu-latest
+    container: mcr.microsoft.com/dotnet/sdk:7.0
+
+    steps:
+      - name: Install jq
+        run: |
+          apt-get update
+          apt-get install jq -y
+
+      - name: Checkout
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Trust Checkout
+        run: git config --global --add safe.directory /__w/PlayerRank/PlayerRank
+
+      - name: Calculate Version
+        run: ./build/version.sh
+
+      - name: Build
+        run: ./build/build.sh
+
+      - name: Unit Tests
+        run: ./build/test.sh
+
+      - name: Create NuGet Package
+        run: ./build/publish.sh
+
+      - name: Upload build
+        uses: actions/upload-artifact@v1
+        with:
+          name: NuGet
+          path: .artifacts/

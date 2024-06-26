@@ -1,0 +1,304 @@
+name: ci
+on:
+  push: ~
+  pull_request: ~
+jobs:
+  ci:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-latest
+
+    name: Python ${{ matrix.python-version }}${{ fromJSON('["", " (regex)"]')[matrix.regex == '1'] }}
+
+    strategy:
+      matrix:
+        python-version: [ "3.7", "3.8", "3.9", "3.10", "3.11", "3.12", "pypy-3.8", "pypy-3.9", "pypy-3.10" ]
+        regex: [ "0", "1" ]
+        exclude:
+          # regex module doesn't play well with pypy and unicode.
+          - python-version: "pypy-3.8"
+            regex: "1"
+          - python-version: "pypy-3.9"
+            regex: "1"
+          - python-version: "pypy-3.10"
+            regex: "1"
+          # test regex module only with Python 3.9.
+          - python-version: "3.7"
+            regex: "1"
+          - python-version: "3.8"
+            regex: "1"
+          - python-version: "3.10"
+            regex: "1"
+          - python-version: "3.11"
+            regex: "1"
+          - python-version: "3.12"
+            regex: "1"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install Dependencies
+        run: |
+          pip install -e .[dev,test]
+
+      - name: Install regex
+        run: |
+          pip install regex
+        if: matrix.regex == '1'
+
+      - name: Pylint
+        run: pylint guessit
+
+      - name: Test
+        run: |
+          pytest --cov=guessit
+        env:
+          REBULK_REGEX_ENABLED: ${{ matrix.regex }}
+
+      - name: Codecov
+        uses: codecov/codecov-action@v3
+
+  commitlint:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: wagoid/commitlint-github-action@v5
+
+  build-setuptools:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    needs: [ ci ]
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup python 3.12
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.12
+
+      - name: Install Dependencies
+        run: |
+          pip install -e .[dev]
+
+      - name: Git User config
+        run: |
+          git config --global user.email "action@github.com"
+          git config --global user.name "github-actions"
+
+      - name: Bump version
+        run: semantic-release version --no-commit --no-tag --no-push
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build
+        run: python setup.py sdist bdist_wheel
+
+      - uses: actions/upload-artifact@v3
+        with:
+          name: guessit-python
+          path: ./dist
+
+  build-bin-linux:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    needs: [ ci ]
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup python 3.12
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.12
+
+      - name: Install Dependencies
+        run: |
+          pip install -e .[dev]
+
+      - name: Git User config
+        run: |
+          git config --global user.email "action@github.com"
+          git config --global user.name "github-actions"
+
+      - name: Bump version
+        run: semantic-release version --no-commit --no-tag --no-push
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Binary
+        run: pyinstaller --dist ./dist guessit.spec
+
+      - name: Check binary
+        run: ./dist/guessit "Treme.1x03.Right.Place,.Wrong.Time.HDTV.XviD-NoTV.avi"
+
+      - uses: actions/upload-artifact@v3
+        if: matrix.regex == '0'
+        with:
+          name: guessit-bin-linux
+          path: ./dist
+
+  build-bin-windows:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    needs: [ ci ]
+
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup python 3.12
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.12
+
+      - name: Install Dependencies
+        run: |
+          pip install -e .[dev]
+
+      - name: Git User config
+        run: |
+          git config --global user.email "action@github.com"
+          git config --global user.name "github-actions"
+
+      - name: Bump version
+        run: semantic-release version --no-commit --no-tag --no-push
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Binary
+        run: pyinstaller --dist ./dist guessit.spec
+
+      - name: Check binary
+        run: ./dist/guessit "Treme.1x03.Right.Place,.Wrong.Time.HDTV.XviD-NoTV.avi"
+
+      - uses: actions/upload-artifact@v3
+        with:
+          name: guessit-bin-windows
+          path: ./dist
+
+  build-bin-macos:
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository
+    needs: [ ci ]
+
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup python 3.12
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.12
+
+      - name: Install Dependencies
+        run: |
+          pip install -e .[dev]
+
+      - name: Git User config
+        run: |
+          git config --global user.email "action@github.com"
+          git config --global user.name "github-actions"
+
+      - name: Bump version
+        run: semantic-release version --no-commit --no-tag --no-push
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Binary
+        run: pyinstaller --dist ./dist guessit.spec
+
+      - name: Check binary
+        run: ./dist/guessit "Treme.1x03.Right.Place,.Wrong.Time.HDTV.XviD-NoTV.avi"
+
+      - uses: actions/upload-artifact@v3
+        with:
+          name: guessit-bin-macos
+          path: ./dist
+
+  release:
+    if: github.ref == 'refs/heads/master' && github.event_name == 'push'
+    needs: [ commitlint, build-setuptools, build-bin-linux, build-bin-windows, build-bin-macos ]
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup python 3.12
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.12
+
+      - uses: actions/download-artifact@v3
+        with:
+          path: artifacts
+
+      - name: Copy artifacts to ./dist
+        run: |
+          mkdir -p ./dist
+          mv artifacts/guessit-bin-linux/guessit ./dist/guessit-linux
+          mv artifacts/guessit-bin-macos/guessit ./dist/guessit-macos
+          mv artifacts/guessit-bin-windows/guessit.exe ./dist/guessit-windows.exe
+          mv artifacts/guessit-python/* ./dist
+
+      - name: Git User config
+        run: |
+          git config --global user.email "action@github.com"
+          git config --global user.name "github-actions"
+
+      - name: Install python-semantic-release twine
+        run: pip install python-semantic-release twine
+
+      - name: Bump version
+        run: semantic-release version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload to pypi
+        run: twine upload --username "__token__" --password "${PYPI_TOKEN}" dist/*.tar.gz dist/*.whl
+        env:
+          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+
+      - name: Publish release
+        run: semantic-release publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Merge master to develop
+        uses: robotology/gh-action-nightly-merge@v1.4.0
+        with:
+          stable_branch: 'master'
+          development_branch: 'develop'
+          allow_ff: true
+          user_name: github-actions
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

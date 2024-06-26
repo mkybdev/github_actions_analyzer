@@ -1,0 +1,33 @@
+name: Test
+
+permissions:
+  contents: read
+
+# this will be executed on every push on a branch (hence on every commit), but not when pushing a tag
+on:
+  push:
+    branches:
+      - '*'
+
+jobs:
+  package:
+    name: Test and publish package
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout the project
+        uses: actions/checkout@v3
+      - name: Set up the JDK
+        uses: actions/setup-java@v2
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'maven'
+      - name: Download application dependencies
+        run: mvn -B dependency:go-offline --batch-mode
+      - name: Create application package
+        run: mvn -B package
+      - name: Store test reports
+        uses: actions/upload-artifact@v3
+        with:
+          name: reports
+          path: target/surefire-reports

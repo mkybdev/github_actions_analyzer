@@ -1,0 +1,274 @@
+name: Continuous integration
+
+on:
+  push:
+    branches:
+      - main
+  pull_request: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typescript:
+    name: typescript
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read .node-version
+        id: node-version
+        run: echo "node-version=$(cat .node-version)" >> $GITHUB_OUTPUT
+      - name: install node
+        uses: actions/setup-node@v4
+        with:
+          cache: yarn
+          node-version: ${{ steps.node-version.outputs.node-version }}
+      - name: yarn install
+        run: yarn install
+      - name: graphql-codegen
+        run: yarn run graphql:codegen
+      - name: tsc on resulting generated files
+        run: yarn run tsc --noEmit
+  jest:
+    name: jest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read .node-version
+        id: node-version
+        run: echo "node-version=$(cat .node-version)" >> $GITHUB_OUTPUT
+      - name: install node
+        uses: actions/setup-node@v4
+        with:
+          cache: yarn
+          node-version: ${{ steps.node-version.outputs.node-version }}
+      - name: yarn install
+        run: yarn install
+      - name: build
+        run: yarn run test
+      - name: Publish Test Report
+        uses: mikepenz/action-junit-report@v4
+        if: always() # always run even if the previous step fails
+        with:
+          check_name: 'Jest Report'
+          report_paths: 'test/reports/TEST-*.xml'
+      - name: Archive HTML test reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: jest-reports
+          path: test/html_reports/*
+  minitest:
+    permissions: write-all
+    name: minitest
+    runs-on: ubuntu-latest
+    env:
+      TEST_DATABASE_URL: postgres://postgres:postgres@localhost/intercode_test
+      RAILS_ENV: test
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install libvips42
+        run: sudo apt-get update && sudo apt-get install libvips42
+      - name: Upgrade postgres client utilities
+        run: |
+          sudo sh -c 'echo "deb http://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list'
+          wget -qO- https://www.postgresql.org/media/keys/ACCC4CF8.asc | sudo tee /etc/apt/trusted.gpg.d/pgdg.asc &>/dev/null
+          sudo apt-get update
+          sudo apt-get install postgresql-client -y
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+      - name: Database setup
+        run: bundle exec rails db:create db:migrate
+      - name: Run tests
+        run: TERM=xterm-color bundle exec rails test
+      - name: Generate Coverage Report
+        uses: clearlyip/code-coverage-report-action@v5
+        id: code_coverage_report_action
+        #Dont run for dependabot unless you fix PR comment permissions
+        if: ${{ github.actor != 'dependabot[bot]'}}
+        with:
+          #Location of the generate coverage file
+          filename: 'coverage/coverage.xml'
+          fail_on_negative_difference: true
+          artifact_download_workflow_names: 'ci,cron'
+          only_list_changed_files: true
+      - name: Add Coverage PR Comment
+        uses: marocchino/sticky-pull-request-comment@v2
+        #Make sure the report was generated and that the event is actually a pull request, run if failed or success
+        if: steps.code_coverage_report_action.outputs.file != '' && github.event_name == 'pull_request' && (success() || failure())
+        with:
+          recreate: true
+          path: code-coverage-results.md
+      - name: Publish Test Report
+        uses: mikepenz/action-junit-report@v4
+        if: always() # always run even if the previous step fails
+        with:
+          check_name: 'Minitest Report'
+          report_paths: 'test/reports/TEST-*.xml'
+      - name: Archive HTML test reports
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: minitest-reports
+          path: test/html_reports/*
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up webpack cache
+        uses: actions/cache@v4
+        id: webpack-cache # use this to check for `cache-hit` (`steps.webpack-cache.outputs.cache-hit != 'true'`)
+        with:
+          path: build-cache
+          key: ${{ runner.os }}-dockerimage-webpack-${{ github.ref }}
+          restore-keys: |
+            ${{ runner.os }}-dockerimage-webpack-${{ github.ref }}-
+            ${{ runner.os }}-dockerimage-webpack-
+      - name: Read .node-version
+        id: node-version
+        run: echo "node-version=$(cat .node-version)" >> $GITHUB_OUTPUT
+      - name: install node
+        uses: actions/setup-node@v4
+        with:
+          cache: yarn
+          node-version: ${{ steps.node-version.outputs.node-version }}
+      - name: yarn install
+        run: yarn install
+      - name: Log in to registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+      - name: Build webpack bundle
+        run: yarn run build
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@master
+      - name: Read .ruby-version
+        id: ruby-version
+        run: echo "ruby-version=$(cat .ruby-version)" >> $GITHUB_OUTPUT
+      - name: Build (and push to registry, if on main)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: ${{ github.event_name == 'push' && github.event.ref == 'refs/heads/main' }}
+          load: ${{ !(github.event_name == 'push' && github.event.ref == 'refs/heads/main') }}
+          platforms: linux/amd64
+          target: production
+          tags: |
+            ghcr.io/neinteractiveliterature/intercode:${{ github.sha }}
+          build-args: |
+            RUBY_VERSION=${{ steps.ruby-version.outputs.ruby-version }}
+            NODE_VERSION=${{ steps.node-version.outputs.node-version }}
+            REVISION=${{ github.sha }}
+      - name: Check that app can boot
+        run: >
+          docker run -e DATABASE_URL=postgresql://fakehost/not_a_real_database
+          -e AWS_S3_BUCKET=fakebucket
+          ghcr.io/neinteractiveliterature/intercode:${{ github.sha }}
+          bin/rails runner 'puts "Hello, world!"'
+      - name: Build assets only (and push to registry, if on main)
+        uses: docker/build-push-action@v6
+        if: github.event_name == 'push' && github.event.ref == 'refs/heads/main'
+        with:
+          context: .
+          file: Dockerfile.assets
+          push: ${{ github.event_name == 'push' && github.event.ref == 'refs/heads/main' }}
+          platforms: linux/amd64
+          tags: |
+            ghcr.io/neinteractiveliterature/intercode-assets:${{ github.sha }}
+          build-args: |
+            BASEIMAGE=ghcr.io/neinteractiveliterature/intercode:${{ github.sha }}
+  doc-site:
+    name: Build doc site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up docusaurus cache
+        uses: actions/cache@v4
+        with:
+          path: doc-site/.yarn/.cache/webpack
+          key: ${{ runner.os }}-doc-site-docusaurus-${{ github.ref }}
+          restore-keys: |
+            ${{ runner.os }}-doc-site-docusaurus-${{ github.ref }}
+            ${{ runner.os }}-doc-site-docusaurus-
+      - name: Install libvips42
+        run: sudo apt-get update && sudo apt-get install libvips42
+      - name: Read .node-version
+        id: node-version
+        run: echo "node-version=$(cat .node-version)" >> $GITHUB_OUTPUT
+      - name: install node
+        uses: actions/setup-node@v4
+        with:
+          cache: yarn
+          node-version: ${{ steps.node-version.outputs.node-version }}
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          bundler-cache: true
+      - name: Install dependencies for generating Liquid doc JSON
+        run: gem install yard toys pry --no-doc
+      - name: yarn install
+        run: yarn install
+      - name: Generate GraphQL schema
+        run: bin/rails graphql:schema:dump
+      - name: Generate Liquid doc JSON
+        run: toys update_liquid_doc_json
+      - name: Build doc site
+        run: cd doc-site && yarn run docusaurus graphql-to-doc -f && yarn node liquid-to-doc.js && yarn run build
+        env:
+          # docusaurus breaks on Node 17+ if we don't do this
+          NODE_OPTIONS: --openssl-legacy-provider
+      - name: Compress built site
+        if: github.event_name == 'push' && github.event.ref == 'refs/heads/main'
+        run: tar cfz doc-site.tar.gz ./doc-site/build
+      - name: Store built site
+        if: github.event_name == 'push' && github.event.ref == 'refs/heads/main'
+        uses: actions/upload-artifact@v4
+        with:
+          name: doc-site
+          path: doc-site.tar.gz
+  update-release-draft:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.event.ref == 'refs/heads/main'
+    needs:
+      - typescript
+      - jest
+      - minitest
+      - docker-build
+      - doc-site
+    outputs:
+      name: ${{ steps.release-drafter.outputs.name }}
+      html_url: ${{ steps.release-drafter.outputs.html_url }}
+    steps:
+      - uses: release-drafter/release-drafter@v6
+        id: release-drafter
+        with:
+          config-name: release-drafter.yml
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Post about drafted release to Slack
+        id: slack
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          channel-id: ${{ secrets.SlackCISuccessNotificationChannelID }}
+          slack-message: |
+            Draft release ${{ steps.release-drafter.outputs.name }} updated:
+
+            - ${{ join(github.event.commits.*.message, '%0A- ') }}
+
+            To release Intercode to production, visit: ${{ steps.release-drafter.outputs.html_url }}
+        env:
+          SLACK_BOT_TOKEN: ${{ secrets.SlackToken }}

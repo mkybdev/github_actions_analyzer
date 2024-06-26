@@ -1,0 +1,55 @@
+name: 'Integration'
+on:
+  - push
+concurrency:
+  group: ${{ github.ref }}-integration
+  cancel-in-progress: true
+jobs:
+  lint-test:
+    name: 'Lint/Test'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
+      - name: 'Checkout'
+        uses: actions/checkout@master
+      - name: Cache node_modules
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: node_modules
+          key: ${{ runner.os }}-${{ hashFiles('yarn.lock') }}
+      - name: Install
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: yarn install --frozen-lockfile --ignore-scripts
+      - name: Validate peer dependencies
+        run: yarn check-peer-dependencies --runOnlyOnRootDependencies
+      - name: Lint
+        run: yarn run lint
+      - name: Test
+        run: yarn run test --coverage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: ./app/coverage
+      - name: Build
+        run: yarn run build
+        env:
+          NODE_ENV: production
+      - name: Check deploy utils
+        run: yarn deploy-utils
+  codecov:
+    name: 'Upload coverage'
+    needs: lint-test
+    runs-on: ubuntu-latest
+    steps:
+      # checkout only needed because codecov wants to know app file structure during upload
+      - name: 'Checkout'
+        uses: actions/checkout@master
+      - uses: actions/download-artifact@v4
+        with:
+          name: coverage
+      - uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}

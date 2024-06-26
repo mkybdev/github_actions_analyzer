@@ -1,0 +1,62 @@
+name: PHPDrafter release
+
+on:
+  release:
+    types: [created, edited]
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup PHP
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version: 8.1
+        ini-values: assert.exception=1, phar.readonly=0, zend.assertions=1
+        extensions: curl, json, phar, mbstring, gzip, bzip2, openssl
+        tools: pecl, phing
+        coverage: none
+
+    - name: Get Composer Cache Directory
+      id: composer-cache
+      run: echo "::set-output name=dir::$(composer config cache-files-dir)"
+
+    - name: Cache dependencies
+      uses: actions/cache@v4
+      with:
+        path: ${{ steps.composer-cache.outputs.dir }}
+        key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+        restore-keys: ${{ runner.os }}-composer-
+
+    - name: Validate composer.json and composer.lock
+      run: composer validate
+
+    - name: Install dependencies
+      run: composer install --prefer-dist --no-progress --ignore-platform-reqs
+
+    - name: Compile phar
+      run: phing phar
+
+    - name: Shasum builds
+      run: sha256sum build/out/*
+
+    - name: Upload binary to release
+      uses: svenstaro/upload-release-action@2.9.0
+      with:
+        repo_token: ${{ secrets.GITHUB_TOKEN }}
+        file: build/out/phpdraft-${{ github.event.release.tag_name }}.phar
+        asset_name: phpdraft-${{ github.event.release.tag_name }}.phar
+        tag: ${{ github.event.release.tag_name }}
+        overwrite: false
+
+    - name: Upload library to release
+      uses: svenstaro/upload-release-action@2.9.0
+      with:
+        repo_token: ${{ secrets.GITHUB_TOKEN }}
+        file: build/out/phpdraft-library-${{ github.event.release.tag_name }}.phar
+        asset_name: phpdraft-library-${{ github.event.release.tag_name }}.phar
+        tag: ${{ github.event.release.tag_name }}
+        overwrite: false

@@ -1,0 +1,353 @@
+name: GitHub CI
+
+on:
+-   push
+-   pull_request
+
+jobs:
+    windowsBuild:
+        name: Windows Build
+        runs-on: windows-2022
+
+        strategy:
+            fail-fast: false
+            matrix:
+                CONFIGURATION:
+                -   Debug
+                -   Release
+
+                TARGET_CPU:
+                -   x86
+                -   amd64
+
+                LLVM_VERSION:
+                -   llvm-3.4.2
+                -   llvm-8.0.0
+                -   llvm-18.1.6
+
+        env:
+            RELEASE: ${{ startsWith(github.ref, 'refs/tags/') && matrix.CONFIGURATION == 'Release' }}
+
+        defaults:
+            run:
+                shell: cmd
+
+        steps:
+        -   name: Checkout repo
+            uses: actions/checkout@v3
+
+        -   name: Install
+            run: |
+                set CONFIGURATION=${{matrix.CONFIGURATION}}
+                set LLVM_VERSION=${{matrix.LLVM_VERSION}}
+                call ci\github-actions\set-env.bat msvc17 ${{matrix.TARGET_CPU}}
+                call ci\github-actions\install-windows.bat
+                git clone --branch re2s-no-abseil --depth 1 https://github.com/vovkos/re2s
+                git clone --depth 1 https://github.com/vovkos/axl
+                git clone --depth 1 https://github.com/vovkos/graco
+
+        -   name: Setup NASM
+            uses: ilammy/setup-nasm@v1
+            if: ${{ matrix.TARGET_CPU == 'amd64' }}
+
+        -   name: Build and test
+            run: |
+                set CONFIGURATION=${{matrix.CONFIGURATION}}
+                set LLVM_VERSION=${{matrix.LLVM_VERSION}}
+                set THIS_DIR=%CD%
+                set THIS_DIR_CMAKE=%THIS_DIR:\=/%
+
+                call ci\github-actions\set-env.bat msvc17 ${{matrix.TARGET_CPU}}
+                call axl\ci\github-actions\build-re2s.bat
+                call axl\ci\github-actions\build-lua.bat
+
+                mkdir axl\build
+                cd axl\build
+                cmake .. %CMAKE_CONFIGURE_FLAGS% || exit
+                cmake --build . %CMAKE_BUILD_FLAGS% || exit
+
+                cd %THIS_DIR%
+                echo set (AXL_CMAKE_DIR %THIS_DIR_CMAKE%/axl/cmake %THIS_DIR_CMAKE%/axl/build/cmake) >> paths.cmake
+
+                mkdir graco\build
+                cd graco\build
+                cmake .. %CMAKE_CONFIGURE_FLAGS% || exit
+                cmake --build . %CMAKE_BUILD_FLAGS% || exit
+
+                cd %THIS_DIR%
+                echo set (GRACO_CMAKE_DIR %THIS_DIR_CMAKE%/graco/cmake %THIS_DIR_CMAKE%/graco/build/cmake) >> paths.cmake
+
+                mkdir build
+                cd build
+                cmake .. %CMAKE_CONFIGURE_FLAGS% || exit
+                cmake --build . %CMAKE_BUILD_FLAGS% || exit
+                ctest --output-on-failure -C %CONFIGURATION% || exit
+
+        -   name: Package
+            id: PACKAGE
+            if: ${{ env.RELEASE == 'true' }}
+            run: |
+                set THIS_DIR=%CD%
+                set THIS_DIR_CMAKE=%THIS_DIR:\=/%
+
+                cd build
+                cpack -G 7Z -C Release
+
+                for /f "usebackq tokens=*" %%i in (`cmake -P print-package-file-name.cmake 2^>^&1`) do (set CPACK_PACKAGE_FILE_NAME=%%i)
+                set DEPLOY_FILE=build/%CPACK_PACKAGE_FILE_NAME%.7z
+
+                echo ::set-output name=DEPLOY_FILE::%DEPLOY_FILE%
+
+        -   name: Deploy to GitHub Releases
+            uses: softprops/action-gh-release@v1
+            if: ${{ env.RELEASE == 'true' }}
+            env:
+                GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
+            with:
+                files: ${{steps.PACKAGE.outputs.DEPLOY_FILE}}
+
+    linuxBuild:
+        name: Linux Build
+        runs-on: ubuntu-20.04
+
+        strategy:
+            fail-fast: false
+            matrix:
+                CONFIGURATION:
+                -   Debug
+                -   Release
+
+                TARGET_CPU:
+                -   x86
+                -   amd64
+
+                LLVM_VERSION:
+                -   llvm-9
+                -   llvm-12
+
+        env:
+            RELEASE: ${{ startsWith(github.ref, 'refs/tags/') && matrix.CONFIGURATION == 'Release' }}
+            DEPLOY_BINARIES: ${{ github.ref == 'refs/heads/master' && matrix.CONFIGURATION == 'Release' }}
+            BUILD_DOC: ${{ github.ref == 'refs/heads/master' && matrix.CONFIGURATION == 'Release' && matrix.TARGET_CPU == 'amd64' && matrix.LLVM_VERSION == 'llvm-9' }}
+
+        defaults:
+            run:
+                shell: bash
+
+        steps:
+        -   name: Checkout repo
+            uses: actions/checkout@v3
+
+        -   name: Install
+            run: |
+                export TARGET_CPU=${{matrix.TARGET_CPU}}
+                export LLVM_VERSION=${{matrix.LLVM_VERSION}}
+                source ./ci/github-actions/install-linux.sh
+                git clone --branch re2s-no-abseil --depth 1 https://github.com/vovkos/re2s
+                git clone --depth 1 https://github.com/vovkos/axl
+                git clone --depth 1 https://github.com/vovkos/graco
+
+        -   name: Build and test
+            run: |
+                THIS_DIR=$(pwd)
+
+                source axl/ci/github-actions/build-re2s.sh ${{matrix.TARGET_CPU}} ${{matrix.CONFIGURATION}}
+
+                mkdir axl/build
+                pushd axl/build
+                cmake .. -DTARGET_CPU=${{matrix.TARGET_CPU}} -DCMAKE_BUILD_TYPE=${{matrix.CONFIGURATION}}
+                make
+                popd
+
+                echo "set (AXL_CMAKE_DIR $THIS_DIR/axl/cmake $THIS_DIR/axl/build/cmake)" >> paths.cmake
+
+                mkdir graco/build
+                pushd graco/build
+                cmake .. -DTARGET_CPU=${{matrix.TARGET_CPU}} -DCMAKE_BUILD_TYPE=${{matrix.CONFIGURATION}}
+                make
+                popd
+
+                echo "set (GRACO_CMAKE_DIR $THIS_DIR/graco/cmake $THIS_DIR/graco/build/cmake)" >> paths.cmake
+
+                mkdir build
+                pushd build
+                cmake .. -DTARGET_CPU=${{matrix.TARGET_CPU}} -DCMAKE_BUILD_TYPE=${{matrix.CONFIGURATION}}
+                make
+                ctest --output-on-failure
+
+                cmake . -DJANCY_TEST_JIT_KIND=--orc -DJANCY_TEST_DEBUG_INFO=
+                if [[ ${{matrix.LLVM_VERSION}} != "llvm-9" ]]; then ctest --output-on-failure; fi
+
+                popd
+
+        -   name: Build documentation tools
+            if: ${{ env.BUILD_DOC == 'true' }}
+            run: |
+                THIS_DIR=$(pwd)
+
+                mkdir doxyrest/build
+                pushd doxyrest/build
+                cmake ..
+                make
+                popd
+
+                echo "set (DOXYREST_CMAKE_DIR $THIS_DIR/doxyrest/cmake $THIS_DIR/doxyrest/build/cmake)" >> paths.cmake
+
+                pushd build
+                cmake .
+                popd
+
+        -   name: Build documentation
+            if: ${{ env.BUILD_DOC == 'true' }}
+            run: |
+                pushd build/doc
+                source index/build-html.sh
+                source build-guide/build-html.sh
+                source language/build-html.sh
+                source compiler/build-html.sh
+                source grammar/build-llk.sh
+                source grammar/build-html.sh
+                source stdlib/build-xml.sh
+                source stdlib/build-rst.sh
+                source stdlib/build-html.sh
+                source api/build-xml.sh
+                source api/build-rst.sh
+                source api/build-html.sh
+                touch html/.nojekyll
+                popd
+
+        -   name: Package
+            id: PACKAGE
+            if: ${{ env.RELEASE == 'true' }}
+            run: |
+                set THIS_DIR=%CD%
+                set THIS_DIR_CMAKE=%THIS_DIR:\=/%
+
+                cd build
+                cpack -G TXZ
+
+                CPACK_PACKAGE_FILE_NAME=$(cmake -P print-package-file-name.cmake 2>&1)
+                DEPLOY_FILE=build/$CPACK_PACKAGE_FILE_NAME.tar.xz
+
+                echo ::set-output name=DEPLOY_FILE::$DEPLOY_FILE
+
+        -   name: Deploy to GitHub Releases
+            if: ${{ env.RELEASE == 'true' }}
+            uses: softprops/action-gh-release@v1
+            env:
+                GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
+            with:
+                files: ${{steps.PACKAGE.outputs.DEPLOY_FILE}}
+
+        -   name: Deploy to GitHub pages
+            if: ${{ env.BUILD_DOC == 'true' }}
+            uses: peaceiris/actions-gh-pages@v3
+            with:
+                github_token: ${{secrets.GITHUB_TOKEN}}
+                publish_dir: build/doc/html
+                force_orphan: true
+
+        -   name: Build and deploy binary package
+            if: ${{ env.DEPLOY_BINARIES == 'true' }}
+            env:
+                JANCY_PACKAGE_ID_RSA: ${{secrets.JANCY_PACKAGE_ID_RSA}}
+            run: |
+                source ci/github-actions/deploy-package.sh linux-${{matrix.TARGET_CPU}}
+
+    macOsBuild:
+        name: macOS Build
+        runs-on: macos-11
+
+        strategy:
+            fail-fast: false
+            matrix:
+                CONFIGURATION:
+                -   Debug
+                -   Release
+
+                LLVM_VERSION:
+                -   llvm@15
+                -   llvm@17
+
+        env:
+            RELEASE: ${{ startsWith(github.ref, 'refs/tags/') && matrix.CONFIGURATION == 'Release' }}
+            DEPLOY_BINARIES: ${{ github.ref == 'refs/heads/master' && matrix.CONFIGURATION == 'Release' }}
+
+        defaults:
+            run:
+                shell: bash
+
+        steps:
+        -   name: Checkout repo
+            uses: actions/checkout@v3
+
+        -   name: Install
+            run: |
+                export LLVM_VERSION=${{matrix.LLVM_VERSION}}
+                source ./ci/github-actions/install-osx.sh
+                git clone --branch re2s-no-abseil --depth 1 https://github.com/vovkos/re2s
+                git clone --depth 1 https://github.com/vovkos/axl
+                git clone --depth 1 https://github.com/vovkos/graco
+
+        -   name: Build and test
+            run: |
+                THIS_DIR=$(pwd)
+
+                source axl/ci/github-actions/build-re2s.sh $(uname -m) ${{matrix.CONFIGURATION}}
+
+                mkdir axl/build
+                pushd axl/build
+                cmake .. -DCMAKE_BUILD_TYPE=${{matrix.CONFIGURATION}}
+                make
+                popd
+
+                echo "set (AXL_CMAKE_DIR $THIS_DIR/axl/cmake $THIS_DIR/axl/build/cmake)" >> paths.cmake
+
+                mkdir graco/build
+                pushd graco/build
+                cmake .. -DCMAKE_BUILD_TYPE=${{matrix.CONFIGURATION}}
+                make
+                popd
+
+                echo "set (GRACO_CMAKE_DIR $THIS_DIR/graco/cmake $THIS_DIR/graco/build/cmake)" >> paths.cmake
+
+                mkdir build
+                pushd build
+                cmake .. -DCMAKE_BUILD_TYPE=${{matrix.CONFIGURATION}} -DJANCY_TEST_JIT_KIND=${{matrix.JIT_KIND}} -DJANCY_TEST_DEBUG_INFO=$DEBUG_INFO
+                make
+                ctest --output-on-failure
+
+                cmake . -DJANCY_TEST_JIT_KIND=--orc -DJANCY_TEST_DEBUG_INFO=
+                ctest --output-on-failure
+
+                popd
+
+        -   name: Package
+            id: PACKAGE
+            if: ${{ env.RELEASE == 'true' }}
+            run: |
+                set THIS_DIR=%CD%
+                set THIS_DIR_CMAKE=%THIS_DIR:\=/%
+
+                cd build
+                cpack -G TXZ
+
+                CPACK_PACKAGE_FILE_NAME=$(cmake -P print-package-file-name.cmake 2>&1)
+                DEPLOY_FILE=build/$CPACK_PACKAGE_FILE_NAME.tar.xz
+
+                echo ::set-output name=DEPLOY_FILE::$DEPLOY_FILE
+
+        -   name: Deploy to GitHub Releases
+            if: ${{ env.RELEASE == 'true' }}
+            uses: softprops/action-gh-release@v1
+            env:
+                GITHUB_TOKEN: ${{secrets.GITHUB_TOKEN}}
+            with:
+                files: ${{steps.PACKAGE.outputs.DEPLOY_FILE}}
+
+        -   name: Build and deploy binary package
+            if: ${{ env.DEPLOY_BINARIES == 'true' }}
+            env:
+                JANCY_PACKAGE_ID_RSA: ${{secrets.JANCY_PACKAGE_ID_RSA}}
+            run: |
+                source ci/github-actions/deploy-package.sh osx-amd64

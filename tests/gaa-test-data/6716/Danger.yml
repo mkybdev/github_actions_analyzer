@@ -1,0 +1,41 @@
+name: Danger
+on: 
+  pull_request:
+  push:
+    branches:
+      - master
+jobs:
+  danger:
+    runs-on: macos-13
+    # https://github.com/danger/danger/issues/1103
+    if: (github.event.pull_request.head.repo.fork == false)
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        submodules: recursive
+        fetch-depth: 0
+    - name: Setup ruby
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: '3.2'
+        bundler-cache: true
+    - name: Cache Mint
+      uses: actions/cache@v3
+      with:
+        path: .mint
+        key: ${{ runner.os }}-mint-${{ env.SWIFTLINT_VERSION }}
+        restore-keys: |
+          ${{ runner.os }}-mint-
+    - name: Install Mint and Packages
+      run: |
+        brew install mint
+        mint install realm/SwiftLint@${{ env.SWIFTLINT_VERSION }}
+    - name: Run Danger
+      run: bundle exec danger
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    env:
+      MINT_PATH: .mint/lib
+      MINT_LINK_PATH: .mint/bin
+      SWIFTLINT_VERSION: 0.53.0
+      DEVELOPER_DIR: /Applications/Xcode_15.0.app/Contents/Developer

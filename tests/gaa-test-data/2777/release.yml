@@ -1,0 +1,44 @@
+---
+name: Prepare AliPhysics tag
+
+'on':
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to prepare'
+        required: true
+        default: 'v5-09-XXy-01'
+
+permissions: {}
+
+jobs:
+  build:
+    permissions:
+      contents: write   # for git push
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Decide which branch to use
+        run: |
+          case "$TAG" in
+            v5-09-59*) echo branch=master ;;
+            *) echo "branch=$(echo "$TAG-patches" | sed -r 's/[a-z]+-01-patches$/-01-patches/')" ;;
+          esac >> "$GITHUB_OUTPUT"
+        id: decide_release_branch
+        env:
+          TAG: ${{ github.event.inputs.tag }}
+
+      - name: Tag and create release
+        uses: alisw/release-action@v1
+        with:
+          name: ${{ github.event.inputs.tag }}
+          # The tag is created from the given commit if it does not exist yet.
+          tag: ${{ github.event.inputs.tag }}
+          commit: ${{ steps.decide_release_branch.outputs.branch }}
+          draft: false
+          prerelease: false
+          # GitHub often chooses the wrong tag to compare against for
+          # generating release notes -- it'll generate a diff e.g. between
+          # v5-09-56-patches and master.
+          generateReleaseNotes: false

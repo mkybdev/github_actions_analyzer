@@ -1,0 +1,27 @@
+on:
+  push:
+    branches: [ master ]
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+name: tests
+jobs:
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Calc coverage
+        run: go test -coverpkg ../pkg/... -coverprofile=c.out
+        working-directory: go/test
+      - name: Upload coverage
+        uses: coverallsapp/github-action@v2.2.3
+        with:
+          github-token: ${{ secrets.github_token }}
+          file: go/test/c.out
+          format: golang

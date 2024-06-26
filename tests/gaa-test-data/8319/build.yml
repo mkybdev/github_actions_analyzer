@@ -1,0 +1,44 @@
+name: Build & Test
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        experimental: [false]
+        emacs-version: [26.1, 26.2, 26.3, 27.1, 27.2, 28.1]
+        include:
+        - emacs-version: snapshot
+          experimental: true
+          os: ubuntu-latest
+        - emacs-version: snapshot
+          experimental: true
+          os: windows-latest
+    continue-on-error: ${{ matrix.experimental }}
+
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v2
+
+      - uses: jcs090218/setup-emacs@master
+        with:
+          version: ${{ matrix.emacs-version }}
+
+      - uses: emacs-eask/setup-eask@master
+        with:
+          version: 'snapshot'
+
+      - name: Run a multi-line script
+        run: |
+          emacs --version
+          make test

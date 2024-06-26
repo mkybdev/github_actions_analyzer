@@ -1,0 +1,22 @@
+name: Tests
+on: [push, pull_request]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+    env:
+      DOTNET_CLI_TELEMETRY_OPTOUT: 1
+    steps:
+    - uses: actions/checkout@v2
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v1
+      with:
+        dotnet-version: 5.0.101
+    - name: Test
+      run: pwsh _build/test.ps1 -Configuration Debug -Rebuild True -SourceLink false -GenerateReport false
+    - name: Publish coverage
+      uses: coverallsapp/github-action@master
+      with:
+        github-token: "${{ secrets.GITHUB_TOKEN }}"
+        path-to-lcov: "./coverage/coverage.info"

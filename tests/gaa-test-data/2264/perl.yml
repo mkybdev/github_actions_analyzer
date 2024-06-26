@@ -1,0 +1,25 @@
+name: Perl CI
+
+on: [push]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v1
+    - name: check Perl version
+      run: perl -v
+    - name: install cpanm
+      run: curl -L https://cpanmin.us | perl - --sudo App::cpanminus
+    - name: check cpanm version
+      run:  cpanm --version
+    - name: install dependencies
+      run:  sudo cpanm --quiet --notest --skip-satisfied Mojolicious Devel::Cover Devel::Cover::Report::Codecov
+    - name: build makefile
+      run: perl Makefile.PL
+    - name: make
+      run: make
+    - name: test
+      run: cover -test

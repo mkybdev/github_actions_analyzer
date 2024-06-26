@@ -1,0 +1,88 @@
+name: Ruby specs
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Ruby specs
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        ruby-version: ['3.0', '3.1', '3.2', '3.3']
+        gemfile: [rails_7.0, rails_7.1, rails_7.2]
+        postgres-version: ['16']
+        channel: ['stable']
+
+        include:
+          # Test minimum required Ruby and Rails against PostgreSQL 12
+          - ruby-version: '3.0'
+            gemfile: rails_7.0
+            postgres-version: '12'
+            channel: 'stable'
+
+          - ruby-version: '3.1'
+            gemfile: rails_edge
+            postgres-version: '16'
+            channel: 'experimental'
+          - ruby-version: '3.2'
+            gemfile: rails_edge
+            postgres-version: '16'
+            channel: 'experimental'
+          - ruby-version: '3.3'
+            gemfile: rails_edge
+            postgres-version: '16'
+            channel: 'experimental'
+          - ruby-version: 'head'
+            gemfile: rails_7.0
+            postgres-version: '16'
+            channel: 'experimental'
+          - ruby-version: 'head'
+            gemfile: rails_7.1
+            postgres-version: '16'
+            channel: 'experimental'
+          - ruby-version: 'head'
+            gemfile: rails_7.2
+            postgres-version: '16'
+            channel: 'experimental'
+          - ruby-version: 'head'
+            gemfile: rails_edge
+            postgres-version: '16'
+            channel: 'experimental'
+
+        exclude:
+          - ruby-version: '3.0'
+            gemfile: rails_7.2
+    env:
+      BUNDLE_GEMFILE: gemfiles/${{ matrix.gemfile }}.gemfile
+      TEST_CONFIG: ./spec/config.github.yml
+
+    continue-on-error: ${{ matrix.channel != 'stable' }}
+
+    steps:
+    - uses: actions/checkout@v4
+    - uses: ankane/setup-postgres@v1
+      with:
+        postgres-version: ${{ matrix.postgres-version }}
+        database: chronomodel
+    - name: Create Rails app database # FIXME: refactor when ankane/setup-postgres#9 will be merged
+      run: |
+        createdb chronomodel_railsapp
+    - name: Set up Ruby
+      uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: ${{ matrix.ruby-version }}
+        bundler-cache: true
+    - name: Run specs and publish code coverage
+      uses: paambaati/codeclimate-action@v8.0.0
+      env:
+        CC_TEST_REPORTER_ID: dedfb7472ee410eec459bff3681d9a8fd8dd237e9bd7e8675a7c8eb7e253bba9
+      with:
+        coverageCommand: bundle exec rake

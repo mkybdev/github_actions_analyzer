@@ -1,0 +1,24 @@
+# This is a basic workflow to help you get started with Actions
+
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Set up JDK
+      uses: actions/setup-java@v1
+      with:
+        java-version: '8'
+    - name: Analyze with SonarCloud
+      run: |
+        if ["$SONAR_TOKEN" != ""]; then
+          mvn -B verify sonar:sonar -Dsonar.projectKey=tupilabs_HumanNameParser.java -Dsonar.organization=tupilabs -Dsonar.host.url=https://sonarcloud.io -Dsonar.login=$SONAR_TOKEN || true
+        fi
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

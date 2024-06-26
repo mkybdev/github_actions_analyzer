@@ -1,0 +1,55 @@
+name: Release package
+
+on:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  CI:
+    uses: enspirit/finitio.js/.github/workflows/tests.yml@master
+
+  Npm:
+    needs: CI
+    runs-on: ubuntu-latest
+    env:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+    steps:
+      - uses: act10ns/slack@v1
+        with:
+          status: starting
+          channel: '#opensource-cicd'
+
+      - uses: actions/checkout@v2
+
+      - uses: actions/setup-node@v2
+        with:
+          node-version: 20
+          registry-url: 'https://registry.npmjs.org'
+          always-auth: true
+
+      - run: npm install -g grunt-cli
+
+      - name: Install dependencies
+        run: npm install
+
+      - run: grunt shell || true
+
+      - run: npm run build
+
+      - name: Build finitio
+        run: npm run build
+        id: build
+
+      - name: Push package
+        id: push-package
+        run: npm publish --access-public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - uses: act10ns/slack@v1
+        with:
+          status: ${{ job.status }}
+          steps: ${{ toJson(steps) }}
+          channel: '#opensource-cicd'
+        if: always()

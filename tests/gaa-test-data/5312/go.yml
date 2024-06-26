@@ -1,0 +1,27 @@
+name: Build Status
+
+on:
+  push:
+    branches: [ main, master, build-action ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  test-ubuntu:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Install Go
+      uses: actions/setup-go@v2
+
+    - name: Install SASS
+      run: "wget -qO- https://github.com/sass/dart-sass/releases/download/1.66.1/dart-sass-1.66.1-linux-x64.tar.gz | tar -xz && sudo mv dart-sass/* /usr/bin/ && rmdir dart-sass"
+
+    - name: Checkout
+      uses: actions/checkout@v2
+
+    - name: Build
+      run: go build main.go
+
+    - name: Test
+      run: go test ./...

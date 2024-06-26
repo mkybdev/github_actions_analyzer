@@ -1,0 +1,21 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "*"
+
+jobs:
+  releasse:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: olafurpg/setup-scala@v13
+        with:
+          # use Java 8
+          java-version: adopt@1.8
+      - name: Release to bintray
+        run: |
+          sbt publish
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PACKAGES_GITHUB_TOKEN }}

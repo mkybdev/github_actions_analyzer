@@ -1,0 +1,428 @@
+name: CI
+
+# Trigger the workflow on push or pull request
+on:
+  workflow_dispatch:
+    inputs:
+      # see https://github.com/marketplace/actions/debugging-with-tmate
+      debug_enabled:
+        description: 'Run the build with tmate debugging enabled'
+        type: boolean
+  pull_request:
+  push:
+  schedule:
+    # Every day at 2:30 AM UTC
+    - cron: '30 2 * * *'
+
+concurrency:
+  # group by workflow and ref; the last slightly strange component ensures that for pull
+  # requests, we limit to 1 concurrent job, but for the master branch we don't
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.ref != 'refs/heads/master' || github.run_number }}
+  # Cancel intermediate builds, but only if it is a pull request build.
+  cancel-in-progress: ${{ startsWith(github.ref, 'refs/pull/') }}
+
+env:
+  # default config flags: enable debug asserts
+  CONFIGFLAGS: "--enable-debug"
+  # CHERE_INVOKING=1 lets us start a 'login shell' (to set paths) in Windows without changing directory
+  CHERE_INVOKING: 1
+
+jobs:
+  test:
+    name: ${{ matrix.test-suites }} - ${{ matrix.extra }} - ${{ matrix.os }}
+    # Don't run this twice on PRs for branches pushed to the same repository
+    if: ${{ !(github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        shell: [bash]
+        test-suites:
+          [
+            # base test: fast first test
+            "testinstall",
+
+            "teststandard",
+
+            # run tests contained in the manual
+            "testmanuals",
+
+            # test error reporting and compiling as well as libgap
+            "testexpect testmockpkg testspecial test-compile testlibgap testkernel testworkspace",
+
+            # compile packages and run GAP tests
+            # don't use --enable-debug to prevent the tests from taking too long
+            "testpackages testinstall-loadall",
+          ]
+        extra: [""]
+
+        # add a few extra tests
+        include:
+          # test creating the manual
+          # also test `make install` here, as that wants the manual, too;
+          # and set NO_COVERAGE=1 to ensure the installed GAP binaries don't
+          # contain references to the build directory
+          - os: ubuntu-latest
+            shell: bash
+            test-suites: "makemanuals testmakeinstall"
+            extra: "CONFIGFLAGS=\"--prefix=/tmp/gapprefix\" NO_COVERAGE=1"
+
+          - os: ubuntu-20.04
+            shell: bash
+            test-suites: "teststandard"
+            extra: "ABI=32 CONFIGFLAGS=\"\""
+
+          # FIXME: we used to run `teststandard` for HPC-GAP under Travis CI,
+          # but somehow when running on GitHub Actions, it takes almost 4
+          # hours (!) to complete instead of 25 minutes. So for now we just
+          # run testinstall.
+          - os: ubuntu-latest
+            shell: bash
+            test-suites: "testinstall"
+            extra: "HPCGAP=yes ABI=64"
+
+          # this job also tests GAP without readline
+          - os: macos-latest
+            shell: bash
+            test-suites: "testmockpkg testinstall"
+            extra: "BOOTSTRAP_MINIMAL=yes"
+
+          # run bugfix regression tests
+          # Also turn on '--enable-memory-checking' to make sure GAP compiles
+          # with the flag enabled. We do not actually test the memory
+          # checking, as this slows down GAP too much.
+          # Also check ubuntu-latest works.
+          - os: ubuntu-latest
+            shell: bash
+            test-suites: "testbugfix"
+            extra: "CONFIGFLAGS=\"--enable-memory-checking\""
+
+          # out of tree builds -- these are mainly done to verify that the
+          # build system work in this scenario. Since we don't expect the test
+          # results to vary compared to the in-tree builds, we turn off
+          # coverage reporting by setting NO_COVERAGE=1; this has the extra
+          # benefit of also running the tests at least once with the
+          # ReproducibleBehaviour option turned off.
+
+          # The '--enable-valgrind' checks that GAP builds and runs correctly
+          # when compiled with valgrind support. We do not actually run any
+          # tests using valgrind, as it is too slow.
+          - os: ubuntu-latest
+            shell: bash
+            test-suites: "testbuildsys testmockpkg testinstall"
+            extra: "NO_COVERAGE=1 ABI=64 BUILDDIR=out-of-tree
+                    CONFIGFLAGS=\"--enable-valgrind\""
+            packages: "valgrind"
+
+          # same as above, but in 32 bit mode, also turn off debugging (see
+          # elsewhere in this file for an explanation).
+          - os: ubuntu-20.04
+            shell: bash
+            test-suites: "testbuildsys testmockpkg testinstall"
+            extra: "NO_COVERAGE=1 ABI=32 BUILDDIR=out-of-tree CONFIGFLAGS=\"\""
+
+          # test Julia integration
+          - os: ubuntu-20.04
+            shell: bash
+            test-suites: "testinstall"
+            extra: "JULIA=yes CONFIGFLAGS=\"--enable-debug --disable-Werror\""
+
+          - os: windows-2019
+            # The 'run' steps in this job use Cygwin's bash, once it is set up.
+            #   --login: make a login shell (so PATH is set up)
+            #   -o igncr: Accept windows line endings
+            #   {0} : Pass any extra arguments from CI
+            shell: C:\cygwin64\bin\bash.exe --login -o igncr '{0}'
+            test-suites: "testmockpkg testinstall"
+
+    env:
+      TEST_SUITES: ${{ matrix.test-suites }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: "Set up Python"
+        uses: actions/setup-python@v5
+        with:
+          python-version: 3.9
+
+      - uses: gap-actions/setup-cygwin@v1
+        if: ${{ runner.os == 'Windows' }}
+        with:
+          PKGS_TO_INSTALL: 'wget,git,gcc-g++,gcc-core,m4,libgmp-devel,make,automake,libtool,autoconf,autoconf2.5,zlib-devel,libreadline-devel,libmpc-devel,libmpfr-devel,xdg-utils,pkg-config'
+
+      # There are two cygwin installs on github actions (ours,
+      # and a preinstalled one which we can't use as not enough packages are installed.
+      # Due to conflicts between these two, we cannot spawn new Cygwin processes and
+      # then use IO between processes
+      - if: ${{ runner.os == 'Windows' }}
+        name: "Remove tests which do not work on github actions in Windows"
+        run: |
+               rm tst/testinstall/testunix/streamio.tst tst/testinstall/testunix/streams.tst
+
+      - name: "Set up compiler and linker flags"
+        run: |
+               ${{ matrix.extra }}
+               if [[ -n ${NO_COVERAGE} ]] ; then
+                  echo "No coverage reporting"
+               elif [ "$RUNNER_OS" == "Linux" ] ; then
+                  # Passing -pthread makes linux gcc generate profiles in a thread-safe way,
+                  # but that is very slow, so we force non-threadsafe generation.
+                  echo "Use non-threadsafe coverage options, updating compiler and linker flags"
+                  echo "CFLAGS=--coverage -O2 -g -fprofile-update=single" >> $GITHUB_ENV
+                  echo "CXXFLAGS=--coverage -O2 -g -fprofile-update=single" >> $GITHUB_ENV
+                  echo "LDFLAGS=--coverage -fprofile-update=single" >> $GITHUB_ENV
+               else
+                  echo "Using standard coverage options, updating compiler and linker flags"
+                  echo "CFLAGS=--coverage -O2 -g" >> $GITHUB_ENV
+                  echo "CXXFLAGS=--coverage -O2 -g" >> $GITHUB_ENV
+                  echo "LDFLAGS=--coverage" >> $GITHUB_ENV
+               fi
+
+      - name: "Install dependencies"
+        run: |
+               ${{ matrix.extra }}
+               echo "${{ matrix.extra }}" > extra.flags
+               if [ "$RUNNER_OS" == "Linux" ]; then
+                   packages=(${{ matrix.packages }})
+                   if [[ $TEST_SUITES == *testbuildsys* ]] ; then
+                       sudo apt-get remove libgmp-dev libreadline-dev zlib1g-dev
+                   else
+                       packages+=(libgmp-dev libreadline-dev zlib1g-dev expect)
+                   fi
+                   if [[ $TEST_SUITES == *testpackages* ]] ; then
+                       packages+=(            # For:
+                         4ti2                   # 4ti2Interface
+                         libcdd-dev             # CddInterface
+                         libcurl4-openssl-dev   # curlInterface
+                         libfplll-dev           # float
+                         libmpc-dev             # float
+                         libmpfi-dev            # float
+                         libmpfr-dev            # float
+                         libncurses-dev         # browse
+                         libzmq3-dev            # ZeroMQInterface
+                         pari-gp                # alnuth
+                         singular               # singular
+                       )
+                   fi
+                   if [[ $TEST_SUITES == *makemanuals* ]] ; then
+                       packages+=(
+                         texlive-latex-base
+                         texlive-latex-recommended
+                         texlive-latex-extra
+                         texlive-fonts-recommended
+                       )
+                   fi
+                   if [[ $ABI == 32 ]] ; then
+                       sudo dpkg --add-architecture i386
+                       for i in "${!packages[@]}"; do
+                           packages[$i]="${packages[$i]}:i386"
+                       done
+                       packages+=(gcc-multilib g++-multilib)
+                   fi
+                   sudo apt-get update
+                   sudo apt-get install --no-install-recommends "${packages[@]}"
+                   sudo apt-get install pkg-config
+               elif [ "$RUNNER_OS" == "macOS" ]; then
+                   brew install autoconf gmp zlib pkg-config
+               fi
+               python -m pip install gcovr
+
+      # Setup ccache, to speed up repeated compilation of the same binaries
+      # (i.e., GAP and the packages)
+      - name: "Setup ccache"
+        if: ${{ runner.os != 'Windows' }}
+        uses: Chocobo1/setup-ccache-action@v1
+        with:
+          update_packager_index: false
+          override_cache_key: ${{ runner.os }}-${{ hashFiles('extra.flags') }}-${{ github.ref }}
+          override_cache_key_fallback: ${{ runner.os }}-${{ hashFiles('extra.flags') }}
+      - name: "Workaround GitHub security concerns" # see https://github.com/gap-system/gap/issues/4861
+        run: git config --global --add safe.directory $PWD
+      - name: "Configure GAP"
+        run: ${{ matrix.extra }} dev/ci-configure-gap.sh
+      - name: "Build GAP"
+        run: ${{ matrix.extra }} dev/ci-build-gap.sh
+      - name: "Download packages"
+        run: ${{ matrix.extra }} dev/ci-download-pkgs.sh
+      - name: "Setup tmate session"
+        uses: mxschmitt/action-tmate@v3
+        if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.debug_enabled }}
+      - name: "Run tests"
+        run: ${{ matrix.extra }} dev/ci.sh ${{ matrix.test-suites }}
+      - name: "Upload pdf manuals"
+        if: ${{ contains(matrix.test-suites, 'makemanuals') }}
+        uses: actions/upload-artifact@v4
+        with:
+          if-no-files-found: error
+          name: manuals-pdf
+          path: |
+            doc/dev/manual.pdf
+            doc/hpc/manual.pdf
+            doc/ref/manual.pdf
+            doc/tut/manual.pdf
+      - name: "Upload html manuals"
+        if: ${{ contains(matrix.test-suites, 'makemanuals') }}
+        uses: actions/upload-artifact@v4
+        with:
+          if-no-files-found: error
+          name: manuals-html
+          path: |
+            doc/*/*.html
+            doc/*/*.css
+            doc/*/*.js
+      - name: "Gather coverage data"
+        run: ${{ matrix.extra }} dev/ci-gather-coverage.sh
+      - name: "Upload coverage data to Codecov"
+        uses: codecov/codecov-action@v3
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+
+
+  cross_compile:
+    # The host should always be linux
+    runs-on: ubuntu-22.04
+    name: Cross compiler for s390x
+
+    steps:
+      - name: Install Cross-Compile Support
+        uses: cyberjunk/gha-ubuntu-cross@167f2e5e6bc0e78d9420ed64aa66b38bda701088
+        with:
+          arch: s390x
+
+      - name: Install general build dependencies
+        run: sudo apt-get install -q -y git autoconf
+
+      - name: Install cross compile dependencies
+        run: sudo apt-get install -q -y git libgmp-dev:s390x libreadline-dev:s390x zlib1g-dev:s390x
+
+      - uses: actions/checkout@v4
+
+      - run: ./autogen.sh
+
+      - name: Native compile
+        run: |
+          # When building a git snapshot, configure & compile a native version of GAP to
+          # generate ffdata.{c,h}, c_oper1.c and c_type1.c -- in a GAP release tarball
+          # this is not necessary.
+          mkdir native-build
+          cd native-build
+          ../configure --without-readline
+          make -j2
+          cp build/c_*.c build/ffdata.* ../src/
+          cd ..
+
+      - name: Configure
+        run: ./configure --host="s390x-linux-gnu"
+
+      - name: Cross compile
+        run: make -j2 V=1 all build-testlibgap build-testkernel
+
+      - name: Fixup sysinfo.gap
+        run: rm sysinfo.gap && make SYSINFO_CC=gcc SYSINFO_CXX=g++ sysinfo.gap
+
+      - name: Download required GAP packages
+        run: make bootstrap-pkg-minimal
+
+      - name: Run tests in VM
+        uses: uraimo/run-on-arch-action@v2
+        with:
+          arch: s390x
+          distro: ubuntu22.04
+
+          # Not required, but speeds up builds
+          githubToken: ${{ github.token }}
+
+          # The shell to run commands with in the container
+          shell: /bin/sh
+
+          # Install some dependencies in the container. This speeds up builds if
+          # you are also using githubToken. Any dependencies installed here will
+          # be part of the container image that gets cached, so subsequent
+          # builds don't have to re-install them. The image layer is cached
+          # publicly in your project's package repository, so it is vital that
+          # no secrets are present in the container state or logs.
+          install: |
+              apt-get update -q -y
+              # we need build-essential for make and gcc (the latter is used by gac and
+              # hence by the tests involving mockpkg)
+              apt-get install -q -y build-essential git libgmp10 libreadline8 zlib1g
+
+          # Do the thing
+          run: |
+            set -x
+            git config --global --add safe.directory $PWD  # see https://github.com/gap-system/gap/issues/4861
+            make citests
+
+
+  openbsd:
+    runs-on: ubuntu-latest
+    name: Test in OpenBSD
+    env:
+      AUTOCONF_VERSION: 2.71
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download required GAP packages
+        run: |
+          wget https://github.com/gap-system/PackageDistro/releases/download/latest/packages-required.tar.gz
+          mkdir pkg
+          cd pkg
+          tar xvf ../packages-required.tar.gz
+
+      - name: Test in OpenBSD
+        id: test
+        uses: vmactions/openbsd-vm@v1
+        with:
+          envs: 'AUTOCONF_VERSION'
+          usesh: true
+          prepare: |
+            pkg_add bash git gmake autoconf-2.71 gmp
+
+          # Do the thing
+          run: |
+            set -x
+            git config --global --add safe.directory $PWD  # see https://github.com/gap-system/gap/issues/4861
+            rm -rf extern  # ensure we don't build and link against bundled libraries
+            ./autogen.sh
+            ./configure --with-gmp=/usr/local --without-readline
+            export MAKE=gmake
+            gmake -j2 V=1
+            gmake citests
+
+
+  # The following job is duplicated in release.yml - keep the two in sync.
+  # (except for their different 'needs' components).
+  slack-notification:
+    name: Send Slack notification on status change
+    needs:
+      - test
+      - cross_compile
+      - openbsd
+    if: ${{ always() && github.event_name != 'pull_request' && github.repository == 'gap-system/gap' }}
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Get branch name
+        id: get-branch
+        run: echo "branch=${GITHUB_REF#refs/*/}" >> $GITHUB_OUTPUT
+      - name: Determine whether CI status changed
+        uses: gap-actions/should-i-notify-action@v1
+        id: should_notify
+        with:
+          branch: ${{ steps.get-branch.outputs.branch }}
+          needs_context: ${{ toJson(needs) }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          notify_on_changed_status: true
+      - name: Send slack notification
+        uses: act10ns/slack@v2
+        if: ${{ steps.should_notify.outputs.should_send_message == 'yes' }}
+        with:
+          status: ${{ steps.should_notify.outputs.current_status }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

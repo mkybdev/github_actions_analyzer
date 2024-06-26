@@ -1,0 +1,77 @@
+name: Docker releases
+
+on:
+  push:
+    branches:
+      - 'v*'
+    tags-ignore:
+      - '*'
+
+jobs:
+  build-and-test:
+    name: build and test images
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y curl perl netcat-traditional libtest-simple-perl libyaml-perl
+      - name: run test
+        run: make test
+      - name: run clean
+        run: make clean
+
+  push_to_registries:
+    name: Push Docker image to github and dockerhub
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - rocky-icewm-vnc
+          - rocky-xfce-vnc
+          - debian-icewm-vnc
+          - debian-xfce-vnc
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - uses: nelonoel/branch-name@v1.0.1
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+      - name: Push to Docker Hub
+        uses: docker/build-push-action@v5
+        with:
+          push: true
+          file: Dockerfile.${{ matrix.target }}
+          build-args: OMD_VERSION=${{ env.BRANCH_NAME }}
+          tags: |
+            consol/${{ matrix.target }}:${{ env.BRANCH_NAME }}
+            consol/${{ matrix.target }}:latest
+          platforms: linux/amd64,linux/arm64
+      - name: Log in to GitHub Docker Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ secrets.REGISTRY_USER }}
+          password: ${{ secrets.PTA }}
+      - name: Build/Push to github.com
+        uses: docker/build-push-action@v5
+        with:
+          push: true
+          file: Dockerfile.${{ matrix.target }}
+          tags: |
+            ghcr.io/consol/docker-headless-vnc-container/${{ matrix.target }}:${{ env.BRANCH_NAME }}
+            ghcr.io/consol/docker-headless-vnc-container/${{ matrix.target }}:latest
+          platforms: linux/amd64,linux/arm64

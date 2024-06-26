@@ -1,0 +1,260 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - '*_maintenance'
+  pull_request:
+    branches:
+      - '*'
+  release:
+      types: [published]
+
+jobs:
+
+  build:
+
+    strategy:
+
+      # Don't cancel other jobs in the build matrix if one job fails.
+      fail-fast: false
+
+      matrix:
+
+        # Rather than generate all permutations of various settings,
+        # we want to explicitly list each of the variants we want to
+        # test. We can use `name` to declare the names of our variants,
+        # and then use `include` to define their settings.
+
+        name: [
+          linux,
+          linux-debug,
+          windows,
+        ]
+
+        include:
+
+          - name: linux
+            os: ubuntu-20.04
+            buildType: RELEASE
+            publish: true
+            containerImage: ghcr.io/gafferhq/build/build:2.0.0
+            # GitHub container builds run as root. This causes failures for tests that
+            # assert that filesystem permissions are respected, because root doesn't
+            # respect permissions. So we run the final test suite as a dedicated
+            # test user rather than as root.
+            testRunner: su testUser -c
+            sconsCacheMegabytes: 400
+
+          - name: linux-debug
+            os: ubuntu-20.04
+            buildType: DEBUG
+            publish: false
+            containerImage: ghcr.io/gafferhq/build/build:2.0.0
+            testRunner: su testUser -c
+            testArguments: -excludedCategories performance
+            # Debug builds are ludicrously big, so we must use a larger cache
+            # limit. In practice this compresses down to 4-500Mb.
+            sconsCacheMegabytes: 2500
+
+          - name: windows
+            os: windows-2019
+            buildType: RELEASE
+            publish: true
+            containerImage:
+            testRunner: Invoke-Expression
+            testArguments: -excludedCategories performance GafferTest GafferVDBTest GafferUSDTest GafferSceneTest GafferDispatchTest GafferOSLTest GafferImageTest GafferUITest GafferImageUITest GafferSceneUITest GafferDispatchUITest GafferOSLUITest GafferUSDUITest GafferVDBUITest GafferDelightUITest GafferTractorTest GafferTractorUITest
+            sconsCacheMegabytes: 400
+
+    runs-on: ${{ matrix.os }}
+
+    container: ${{ matrix.containerImage }}
+
+    env:
+      ARNOLD_LICENSE_ORDER: none # Don't waste time looking for a license that doesn't exist
+      GAFFER_BUILD_DIR: "./build"
+      GAFFER_CACHE_DIR: "./sconsCache"
+
+    steps:
+
+    - uses: actions/checkout@v3
+
+    - uses: ilammy/msvc-dev-cmd@v1.12.1
+      with:
+        sdk: 10.0.17763.0
+
+    - name: Install toolchain (Windows)
+      run: |
+        python -m pip install scons
+        Invoke-WebRequest -Uri "https://inkscape.org/gallery/item/37363/inkscape-1.2.2_2022-12-09_732a01da63-x64.exe" -OutFile "inkscape.exe"
+        Start-Process .\inkscape.exe /S -NoNewWindow -Wait
+      shell: pwsh
+      if: runner.os == 'Windows'
+
+    - name: Install toolchain (Linux)
+      run: |
+        Xvfb :99 -screen 0 1280x1024x24 &
+        metacity --display :99.0 &
+        useradd -m testUser
+        echo LD_PRELOAD=libSegFault.so >> $GITHUB_ENV
+        # The Docker container configures bash shells such that they enable the
+        # software collections we want. If we could set GitHub's
+        # `defaults.run.shell` to `bash` then all our build steps would pick up
+        # this environment automatically. But we can't do that because it
+        # breaks the build on Windows, and we can't configure a different shell
+        # per platform because GitHub won't allow it. But we can run _this_
+        # Linux-only step in bash, and transfer the environment out to be used
+        # in later steps.
+        echo $PATH > $GITHUB_PATH
+        echo LD_LIBRARY_PATH=$LD_LIBRARY_PATH >> $GITHUB_ENV
+        echo DISPLAY=:99.0 >> $GITHUB_ENV
+      shell: bash
+      if: runner.os == 'Linux'
+
+    - name: 'Install Python Modules'
+      run: |
+        python --version
+        pip install PyJWT==1.7.1 PyGitHub==1.45
+
+    - name: Set Custom Variables
+      run: |
+        .github/workflows/main/setBuildVars.py
+        echo GAFFER_SPHINX=`which sphinx-build` >> $GITHUB_ENV
+      env:
+       GITHUB_ACCESS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+       GAFFER_BUILD_VARIANT: ${{ matrix.name }}
+      shell: bash
+
+    - name: Install dependencies
+      # The `$GITHUB_ENV` shenanigans creates an environment variable
+      # containing the hash of the archive, for use in the cache key
+      # below.
+      run: |
+        echo GAFFER_DEPENDENCIES_HASH=`python .github/workflows/main/installDependencies.py --dependenciesDir ${{ env.GAFFER_BUILD_DIR }} --outputFormat "{archiveDigest}"` >> $GITHUB_ENV
+        ./.github/workflows/main/installDelight.py
+        echo DELIGHT=$GITHUB_WORKSPACE/3delight >> $GITHUB_ENV
+      shell: bash
+
+    - name: Install Mesa (Windows)
+      # Installed after dependencies to avoid errors from python related to existing directory `bin`.
+      # Adapted from Mesa's `systemwidedeploy.cmd` `osmesa` branch.
+      run: |
+        curl.exe -L --output mesa.7z --url https://github.com/pal1000/mesa-dist-win/releases/download/22.3.1/mesa3d-22.3.1-release-msvc.7z
+        & "C:\Program Files\7-Zip\7z.exe" x mesa.7z -omesa
+        ./mesa/systemwidedeploy.cmd 1
+      shell: pwsh
+      if: runner.os == 'Windows'
+
+    - name: Cache
+      uses: actions/cache@v3
+      with:
+        path: ${{ env.GAFFER_CACHE_DIR }}
+        key: ${{ runner.os }}-${{ matrix.containerImage }}-${{env.GAFFER_DEPENDENCIES_HASH}}-${{ matrix.buildType }}-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-${{ matrix.containerImage }}-${{env.GAFFER_DEPENDENCIES_HASH}}-${{ matrix.buildType }}-
+
+    - name: Build Gaffer
+      run: |
+       scons -j 2 build BUILD_TYPE=${{ matrix.buildType }} OPTIONS=.github/workflows/main/sconsOptions
+      env:
+        PYTHONUTF8: 1
+
+    - name: Test
+      # Tests should complete in well under an hour. If they don't it's most likely because
+      # of a hang, in which case we'd like to know more quickly than the default 6hr timeout
+      # allows.
+      timeout-minutes: 60
+      run: |
+        echo "::add-matcher::./.github/workflows/main/problemMatchers/unittest.json"
+        ${{ matrix.testRunner }} "${{ env.GAFFER_BUILD_DIR }}/bin/gaffer test ${{ matrix.testArguments }}"
+        echo "::remove-matcher owner=unittest::"
+
+    - name: Build and test Arnold extension
+      run: |
+        import subprocess
+        import sys
+        import os
+
+        for arnoldVersion in [ "7.1.1.0", "7.2.1.0" ] :
+          arnoldRoot = os.path.join( os.environ["GITHUB_WORKSPACE"], "arnoldRoot", arnoldVersion )
+          os.environ["ARNOLD_ROOT"] = arnoldRoot
+
+          subprocess.check_call(
+            [
+              sys.executable,
+              ".github/workflows/main/installArnold.py",
+              "--version",
+              arnoldVersion
+            ]
+          )
+          #Build Arnold extension
+          subprocess.check_call( "scons -j 2 build BUILD_TYPE=${{ matrix.buildType }} OPTIONS=.github/workflows/main/sconsOptions", shell = True )
+
+          if os.name != "nt" :
+            # Test Arnold extension
+            print( "::add-matcher::./.github/workflows/main/problemMatchers/unittest.json" )
+            subprocess.check_call( "${{ matrix.testRunner }} \"" + os.path.join( os.environ["GAFFER_BUILD_DIR"], "bin", "gaffer" ) + " test IECoreArnoldTest GafferArnoldTest GafferArnoldUITest\"", shell = True )
+            print( "::remove-matcher owner=unittest::" )
+
+          # Publish ARNOLD_ROOT to the environment for subsequent steps,
+          # so we can build the docs for GafferArnold.
+          with open( os.environ["GITHUB_ENV"], "a" ) as f :
+            print( "Setting $ARNOLD_ROOT to '%s'" % arnoldRoot )
+            f.write( 'ARNOLD_ROOT=%s\n' % arnoldRoot )
+      env:
+        PYTHONUTF8: 1
+      shell: python
+
+    - name: Build Docs and Package
+      # Docs builds should be relatively quick. If there is a problem, this
+      # aborts them in a more timely fashion than the default 6hr timeout.
+      timeout-minutes: 20
+      run: |
+        # Treats warnings-as-errors so we know about broken links
+        echo "::add-matcher::./.github/workflows/main/problemMatchers/sphinx.json"
+        scons -j 2 package BUILD_TYPE=${{ matrix.buildType }} OPTIONS=.github/workflows/main/sconsOptions
+        echo "::remove-matcher owner=sphinx::"
+      env:
+        PYTHONUTF8: 1
+      if: matrix.publish
+
+    - name: Validate
+      run: |
+        echo "::add-matcher::./.github/workflows/main/problemMatchers/validateRelease.json"
+        python ./config/validateRelease.py --archive ${{ env.GAFFER_BUILD_NAME }}.${{ env.PACKAGE_EXTENSION }} ${{ env.GAFFER_VALIDATE_EXTRA_FLAGS }}
+        echo "::remove-matcher owner=validateRelease::"
+      if: matrix.publish
+
+    - uses: actions/upload-artifact@v3
+      with:
+        name: ${{ env.GAFFER_BUILD_NAME }}
+        path: ${{ env.GAFFER_BUILD_NAME }}.${{ env.PACKAGE_EXTENSION }}
+      if: matrix.publish
+
+    - name: Publish Release
+      run: |
+        python ./config/publishRelease.py --archive ${{ env.GAFFER_BUILD_NAME }}.${{ env.PACKAGE_EXTENSION }} --repo ${{ github.repository }} --releaseId ${{ env.GAFFER_GITHUB_RELEASEID }}
+      if: matrix.publish && env.GAFFER_GITHUB_RELEASEID != ''
+      env:
+        GITHUB_ACCESS_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Limit cache size
+      # GitHub has a limit of 5G for all caches in a repository. Because we write new
+      # files into `./sconsCache` with every build, we must trim its size to avoid
+      # unbounded growth. In practice, the archives that get uploaded are much smaller
+      # than the limit we apply here, because they're compressed.
+      run: python ./.github/workflows/main/limitDirectorySize.py --directory ./sconsCache --megabytes ${{ matrix.sconsCacheMegabytes }} --verbose
+
+    - name: Debug Failures
+      run: |
+        # Print SCons logs
+        shopt -s nullglob
+        for logFile in config.log
+        do
+         echo $logFile
+         cat $logFile
+        done
+      if: failure()
+      shell: bash
+

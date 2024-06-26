@@ -1,0 +1,40 @@
+---
+name: dryrun
+
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+  schedule:
+    - cron: '0 0 1 * *'
+
+concurrency:
+  group: '${{ github.workflow }} @ ${{ github.event.pull_request.head.label || github.head_ref || github.ref }}'
+  cancel-in-progress: true
+
+jobs:
+  dryrun:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macOS-latest]
+      fail-fast: false
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        id: python
+        with:
+          python-version: '3.8'
+      - name: set python path
+        run: echo -e "[defaults]\ninterpreter_python=${{ steps.python.outputs.python-path }}" > ansible/ansible.cfg
+        if: matrix.os == 'macOS-latest'
+      - name: install python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install --upgrade setuptools
+          pip install -r ansible/requirements.txt
+      - name: dryrun dotfiles
+        run: make check-dotfiles
+      - name: dryrun dependencies
+        run: make check-dependencies

@@ -1,0 +1,28 @@
+name: Release to PYPI
+on:
+  release:
+    types: [created]
+jobs:
+  release:
+    name: Release to PYPI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+      - name: Setup python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.x
+      - name: Update setuptools pip and wheel
+        run: pip install -U setuptools pip wheel
+      - name: Install release requirements
+        run: pip install -r requirements-release.txt
+      - name: Build and release to PYPI
+        run: |
+          python -m build
+          unzip -l dist/*.whl
+          tar tzf dist/*.tar.gz
+          twine upload --non-interactive dist/*
+        env:
+          TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
+          TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}

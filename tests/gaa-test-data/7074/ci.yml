@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - '*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: gradle/wrapper-validation-action@v1
+
+      - name: Setup Java
+        uses: actions/setup-java@v3
+        with:
+          java-version: 19
+          distribution: liberica
+          java-package: jdk+fx
+          cache: gradle
+
+      - name: Build with Gradle
+        run: ./gradlew build --no-daemon

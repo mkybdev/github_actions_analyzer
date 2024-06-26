@@ -1,0 +1,58 @@
+name: CI
+on: [push, pull_request]
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        jdk: [adopt@1.8]
+        scala: ['2.12', '2.13', '3']
+        include:
+          - scala: '2.12'
+            scala-version: 2.12.19
+          - scala: '2.13'
+            scala-version: 2.13.14
+          - scala: '3'
+            scala-version: 3.4.2
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v2
+
+      - name: Set up Scala
+        uses: olafurpg/setup-scala@v13
+        with:
+          java-version: ${{ matrix.jdk }}
+
+      - name: Setup Tor
+        uses: tor-actions/setup-tor@v1.0.0
+
+      - name: Check formatting
+        run: sbt "++${{ matrix.scala-version }} scalafmtCheckAll" scalafmtSbtCheck
+
+      - name: Compile
+        run: sbt "++${{ matrix.scala-version }} compile"
+
+      - name: Run tests
+        run: >
+          if [[ "${{ matrix.scala }}" =~ ^2\..* ]]; then
+            sbt coverage "++${{ matrix.scala-version }} test";
+            else
+            sbt "++${{ matrix.scala-version }} test";
+            fi
+
+      - name: Upload coverage data to Coveralls
+        if: startsWith(matrix.scala, '2')
+        run: sbt ++${{ matrix.scala-version }} coverageAggregate coveralls
+        env:
+          COVERALLS_REPO_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COVERALLS_FLAG_NAME: Scala ${{ matrix.scala-version }}
+
+      - name: Check mdoc output
+        if: matrix.scala == '2.12'
+        run: >
+          sbt ++${{ matrix.scala-version }} mdoc &&
+          git diff --exit-code

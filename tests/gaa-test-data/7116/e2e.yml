@@ -1,0 +1,440 @@
+name: E2E
+
+on:
+  merge_group:
+    types: [checks_requested]
+  pull_request_target:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  CYPRESS_VERIFY_TIMEOUT: 120000
+  GH_PAGES_OWNER: blackbaud
+  PERCY_BROWSER_EXECUTABLE: /usr/bin/chromium
+  PERCY_COMMIT: ${{ github.sha }}
+  PERCY_SKIP_UPDATE_CHECK: 'true'
+  PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
+  PUPPETEER_SKIP_CHROMIUM_DOWNLOAD: 'true'
+  SB_CHROMIUM_PATH: /usr/bin/chromium
+
+jobs:
+  install-deps:
+    name: Install and cache dependencies
+    if: ${{ !startsWith( github.head_ref || github.ref_name, 'release-please--' ) && !contains( github.event.pull_request.labels.*.name, 'skip e2e' ) }}
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.job }}-${{ github.head_ref || github.ref_name || github.event.ref }}
+      cancel-in-progress: true
+    outputs:
+      node-version: ${{ steps.setup-node.outputs.node-version }}
+      parameters: ${{ steps.parameters.outputs.parameters }}
+      pr-number: ${{ steps.set-shas.outputs.pr-number }}
+      pr-labels: ${{ steps.set-shas.outputs.pr-labels }}
+      base: ${{ steps.set-shas.outputs.base }}
+      base-branch: ${{ steps.set-shas.outputs.base-branch }}
+      head: ${{ steps.set-shas.outputs.head }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.head_ref || github.ref_name || github.event.ref }}
+      - uses: actions/setup-node@v4
+        id: setup-node
+        with:
+          node-version-file: '.nvmrc'
+      - name: Rebase current branch
+        run: node ./scripts/rebase-pr.js
+      - name: Cache dependencies
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            /home/runner/.cache/Cypress
+          key: ${{ runner.os }}-node-${{ steps.setup-node.outputs.node-version }}-modules-${{ hashFiles('package-lock.json') }}
+      - name: npm install
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: npm ci
+      - name: Derive appropriate SHAs for base and head for `nx affected` commands
+        id: set-shas
+        uses: ./.github/actions/nx-set-shas
+        with:
+          workflow-id: e2e.yml
+        env:
+          GITHUB_TOKEN: ${{secrets.GH_PERSONAL_ACCESS_TOKEN}}
+      - name: Set workflow parameters
+        id: parameters
+        shell: bash
+        run: |
+          set -exo pipefail
+          if [ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]; then
+            echo -n parameters= >> $GITHUB_OUTPUT
+            npx skyux-dev e2e-workflow --workflowTrigger=pull_request --pr=${{ steps.set-shas.outputs.pr-number }} >> $GITHUB_OUTPUT
+          else
+            echo -n parameters= >> $GITHUB_OUTPUT
+            npx skyux-dev e2e-workflow --pr=${{ steps.set-shas.outputs.pr-number }} >> $GITHUB_OUTPUT
+          fi
+      - name: Show workflow parameters
+        run: |
+          echo 'Using workflow parameters:'
+          echo ''
+          echo '${{ steps.parameters.outputs.parameters }}' | jq
+
+  build-storybook:
+    name: Build Project Storybook
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.job }}--${{ matrix.project }}-${{ github.head_ref || github.ref_name || github.event.ref }}
+      cancel-in-progress: true
+    needs: install-deps
+    strategy:
+      # If one build fails, do not cancel other builds.
+      fail-fast: false
+      matrix:
+        project: ${{ fromJSON(needs.install-deps.outputs.parameters).projects }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.head_ref || github.ref_name || github.event.ref }}
+        if: ${{ matrix.project != 'skip' }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+        if: ${{ matrix.project != 'skip' }}
+      - name: Rebase current branch
+        run: node ./scripts/rebase-pr.js
+        if: ${{ matrix.project != 'skip' }}
+      - name: Retrieve dependencies cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            /home/runner/.cache/Cypress
+          key: ${{ runner.os }}-node-${{ needs.install-deps.outputs.node-version }}-modules-${{ hashFiles('package-lock.json') }}
+        if: ${{ matrix.project != 'skip' }}
+      - name: Build ${{ matrix.project }}
+        run: npx nx run ${{ matrix.project }}:build-storybook:ci
+        if: ${{ matrix.project != 'skip' }}
+      - name: Upload storybook artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.project }}
+          path: ./dist/storybook/${{ matrix.project }}
+          retention-days: 1
+          if-no-files-found: error
+        if: ${{ matrix.project != 'skip' }}
+      - name: Skip
+        run: |
+          echo 'No storybook to build'
+        if: ${{ matrix.project == 'skip' }}
+
+  build-apps:
+    name: Build Apps
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.job }}--${{ matrix.app }}-${{ github.head_ref || github.ref_name || github.event.ref }}
+      cancel-in-progress: true
+    needs: install-deps
+    strategy:
+      # If one build fails, do not cancel other builds.
+      fail-fast: false
+      matrix:
+        app:
+          - code-examples
+          - dep-graph
+          - integration
+          - playground
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.head_ref || github.ref_name || github.event.ref }}
+        if: ${{ fromJson(needs.install-deps.outputs.parameters).ghPagesRepo == 'skyux-pr-preview' }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+        if: ${{ fromJson(needs.install-deps.outputs.parameters).ghPagesRepo == 'skyux-pr-preview' }}
+      - name: Rebase current branch
+        run: node ./scripts/rebase-pr.js
+        if: ${{ fromJson(needs.install-deps.outputs.parameters).ghPagesRepo == 'skyux-pr-preview' }}
+      - name: Retrieve dependencies cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            /home/runner/.cache/Cypress
+          key: ${{ runner.os }}-node-${{ needs.install-deps.outputs.node-version }}-modules-${{ hashFiles('package-lock.json') }}
+        if: ${{ fromJson(needs.install-deps.outputs.parameters).ghPagesRepo == 'skyux-pr-preview' }}
+      - name: Build ${{ matrix.app }}
+        run: |
+          npx nx build ${{ matrix.app }} --baseHref="https://blackbaud.github.io/skyux-pr-preview/${{ needs.install-deps.outputs.pr-number }}/${{ matrix.app }}/"
+        if: ${{ fromJson(needs.install-deps.outputs.parameters).ghPagesRepo == 'skyux-pr-preview' && matrix.app != 'dep-graph' }}
+      - name: Build ${{ matrix.app }}
+        run: npx nx dep-graph --file=dist/apps/dep-graph/index.html
+        if: ${{ fromJson(needs.install-deps.outputs.parameters).ghPagesRepo == 'skyux-pr-preview' && matrix.app == 'dep-graph' }}
+      - name: Upload app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.app }}
+          path: ./dist/apps/${{ matrix.app }}
+          retention-days: 1
+          if-no-files-found: error
+        if: ${{ fromJson(needs.install-deps.outputs.parameters).ghPagesRepo == 'skyux-pr-preview' }}
+      - name: Skip
+        run: echo "Skip building ${{ matrix.app }} app. Only Storybook is published on branch builds."
+        if: ${{ fromJson(needs.install-deps.outputs.parameters).ghPagesRepo != 'skyux-pr-preview' }}
+
+  publish:
+    name: Publish
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.job }}-${{ github.head_ref || github.ref_name || github.event.ref }}
+      cancel-in-progress: true
+    needs:
+      - install-deps
+      - build-storybook
+      - build-apps
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.head_ref || github.ref_name || github.event.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+      - name: Rebase current branch
+        run: node ./scripts/rebase-pr.js
+      - name: Retrieve dependencies cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            /home/runner/.cache/Cypress
+          key: ${{ runner.os }}-node-${{ needs.install-deps.outputs.node-version }}-modules-${{ hashFiles('package-lock.json') }}
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: ./dist/${{ fromJson(needs.install-deps.outputs.parameters).storybooksPath }}
+      - name: Move apps
+        # All the artifacts are downloaded into one folder, so we need to move them into the correct folders.
+        if: ${{ fromJson(needs.install-deps.outputs.parameters).ghPagesRepo == 'skyux-pr-preview' }}
+        # Setting the shell so this step can run as-is on Windows or Linux.
+        shell: bash
+        run: |
+          mkdir -p ./dist/apps
+          for app in code-examples dep-graph integration playground
+          do
+            mv ./dist/${{ fromJson(needs.install-deps.outputs.parameters).storybooksPath }}${app} ./dist/apps/$app
+          done
+      - name: Generate Storybook Composition
+        shell: bash
+        run: |
+          npx nx g @skyux-sdk/e2e-schematics:storybook-composition \
+            --projectsJson='${{ fromJson(needs.install-deps.outputs.parameters).projectsJson }}' \
+            --baseUrl='../${{ fromJson(needs.install-deps.outputs.parameters).storybooksPath }}'
+      - name: Build Storybook Composition
+        run: npx nx run storybook:build-storybook:ci --outputDir=dist/storybook
+      - name: Checkout ${{ fromJson(needs.install-deps.outputs.parameters).ghPagesRepo }}
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.GH_PAGES_OWNER }}/${{ fromJson(needs.install-deps.outputs.parameters).ghPagesRepo }}
+          ref: 'main'
+          fetch-depth: 1
+          path: ./dist/${{ fromJson(needs.install-deps.outputs.parameters).ghPagesRepo }}
+          token: ${{secrets.GH_PERSONAL_ACCESS_TOKEN}}
+      - name: Publish preview and comment on PR
+        run: |
+          npx skyux-dev publish-storybook \
+            --workingDirectory=./dist/${{ fromJson(needs.install-deps.outputs.parameters).ghPagesRepo }} \
+            --pr=${{ needs.install-deps.outputs.pr-number }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+
+  e2e:
+    name: End to end tests
+    runs-on: ubuntu-latest
+    # Baseline branches should complete the E2E jobs so Percy does not get stuck https://www.browserstack.com/question/61332
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.job }}--${{ matrix.project }}-${{ github.head_ref || format('{0}-{1}', github.run_id, github.run_attempt) }}
+      cancel-in-progress: true
+    needs: install-deps
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.install-deps.outputs.parameters).e2eTargets }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.head_ref || github.ref_name || github.event.ref }}
+        if: ${{ matrix.project != 'skip' }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+        if: ${{ matrix.project != 'skip' }}
+      - name: Rebase current branch
+        run: node ./scripts/rebase-pr.js
+        if: ${{ matrix.project != 'skip' }}
+      - name: Retrieve dependencies cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            /home/runner/.cache/Cypress
+          key: ${{ runner.os }}-node-${{ needs.install-deps.outputs.node-version }}-modules-${{ hashFiles('package-lock.json') }}
+        if: ${{ matrix.project != 'skip' }}
+      - name: Check if ${{ matrix.project }} is affected
+        if: ${{ matrix.project != 'skip' }}
+        uses: ./.github/actions/e2e-affected
+        id: affected
+        with:
+          base: ${{ needs.install-deps.outputs.base }}
+          head: ${{ needs.install-deps.outputs.head }}
+          project: ${{ matrix.project }}
+          percy-token: ${{ secrets.PERCY_API }}
+          allow-deleted-screenshots: ${{ contains( fromJSON( needs.install-deps.outputs.pr-labels ), 'screenshot removed' ) }}
+      - name: Verify Cypress
+        run: npx cypress verify
+        if: ${{ matrix.project != 'skip' && steps.affected.outputs.affected == 'true' }}
+      - name: Percy ${{ matrix.project }}
+        shell: bash
+        run: |
+          set +e
+
+          echo '# PERCY_TARGET_BRANCH' $PERCY_TARGET_BRANCH
+          echo '# PERCY_TARGET_COMMIT' $PERCY_TARGET_COMMIT
+
+          # Timing setting recommended by https://docs.percy.io/docs/cypress#missing-assets
+          npx percy exec -t 350 -- nx e2e ${{ matrix.project }} -c ci 2>&1 | tee ${{ runner.temp }}/percy.log
+          RESULT=$?
+          if [ $RESULT -ne 0 ]; then
+            echo "Percy failed with exit code $RESULT"
+            RETRY=$(grep -cE '(This is likely a client error|Error: Can only finalize pending builds)' ${{ runner.temp }}/percy.log)
+            if [ $RETRY -gt 0 ]; then
+              echo "Percy client error. Retrying..."
+              set -eo pipefail
+              npx percy exec -t 350 -- nx e2e ${{ matrix.project }} -c ci
+            else
+              exit 1
+            fi
+          fi
+        env:
+          PERCY_TARGET_BRANCH: ${{ needs.install-deps.outputs.base-branch }}
+          PERCY_TARGET_COMMIT: ${{ steps.affected.outputs.percy_target_commit }}
+          PERCY_BRANCH: ${{ github.head_ref || github.ref_name || github.event.ref }}
+          PERCY_COMMIT: ${{ needs.install-deps.outputs.head }}
+          PERCY_TOKEN: ${{ secrets[matrix.token] }}
+          TERM: 'xterm-256color'
+        if: ${{ matrix.project != 'skip' && steps.affected.outputs.affected == 'true' }}
+      - name: Upload error screenshots
+        uses: actions/upload-artifact@v4
+        if: ${{ failure() }}
+        with:
+          name: cypress-screenshots-${{ matrix.project }}
+          path: ./dist/cypress/${{ matrix.root }}/screenshots
+          retention-days: 4
+      - name: Notify Slack (failure)
+        if: ${{ failure() }}
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_COLOR: 'fail'
+          SLACK_MESSAGE: 'E2E job `${{ matrix.project }}` failed on `${{ github.head_ref || github.ref_name }}` branch, details: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}'
+          SLACK_ICON_EMOJI: ':github:'
+          SLACK_USERNAME: GitHub
+          #cor-skyux-notifications
+          SLACK_CHANNEL: C01GY7ZP4HM
+          SLACK_FOOTER: 'Blackbaud Sky Build User'
+      - name: Skip
+        run: echo "Skip E2E. No E2E changes detected."
+        if: ${{ matrix.project == 'skip' }}
+
+  verify:
+    name: E2E Visual Review
+    runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.job }}-${{ github.head_ref || github.ref_name || github.event.ref }}
+      cancel-in-progress: false
+    needs:
+      - install-deps
+      - e2e
+      - publish
+    if: ${{ always() && !startsWith( github.head_ref || github.ref_name, 'release-please--' ) && !contains( github.event.pull_request.labels.*.name, 'skip e2e' ) }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.head_ref || github.ref_name || github.event.ref }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: '.nvmrc'
+      - name: Rebase current branch
+        run: node ./scripts/rebase-pr.js
+      - name: Retrieve dependencies cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            node_modules
+            /home/runner/.cache/Cypress
+          key: ${{ runner.os }}-node-${{ needs.install-deps.outputs.node-version }}-modules-${{ hashFiles('package-lock.json') }}
+      - name: Build e2e-schematics
+        run: npx nx build e2e-schematics
+      - uses: actions/github-script@v7
+        name: Verify E2E Visual Review
+        id: verify-e2e
+        with:
+          github-token: ${{ secrets.GH_PERSONAL_ACCESS_TOKEN }}
+          script: |
+
+            const anyFailures = ${{ contains(needs.*.outcome, 'failure') }};
+            if (anyFailures) {
+              core.setFailed(`Job failed. Skipping visual review.`);
+            } else {
+              const e2eProjects = ${{ needs.install-deps.outputs.parameters }}.e2eTargets.map(project => project.project);
+              const { verifyE2e } = require('./dist/libs/sdk/e2e-schematics/src/workflow');
+
+              const options = {
+                method: 'GET',
+                headers: {
+                  Authorization: 'Token ${{ secrets.PERCY_API }}'
+                }
+              };
+
+              await verifyE2e(
+                e2eProjects,
+                context.repo.owner,
+                context.repo.repo,
+                '${{ needs.install-deps.outputs.head }}',
+                '${{ github.run_id }}',
+                core,
+                {
+                  listCommitStatusesForRef: github.rest.repos.listCommitStatusesForRef,
+                  listJobsForWorkflowRun: github.rest.actions.listJobsForWorkflowRun
+                },
+                ${{ github.event_name == 'push' || contains( fromJSON( needs.install-deps.outputs.pr-labels ), 'screenshot removed' ) }},
+                (url) => fetch(url, options),
+                (number) => process.exit(number)
+              );
+            }
+
+      - name: Notify Slack (missing screenshots)
+        if: ${{ failure() && steps.verify-e2e.outputs.missingScreenshots }}
+        uses: rtCamp/action-slack-notify@v2
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_WEBHOOK }}
+          SLACK_COLOR: 'fail'
+          SLACK_MESSAGE: 'E2E missing screenshots on `${{ github.head_ref || github.ref_name }}` branch, details: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }} 🧐 ${{ steps.verify-e2e.outputs.missingScreenshots }}'
+          SLACK_ICON_EMOJI: ':github:'
+          SLACK_USERNAME: GitHub
+          #cor-skyux-notifications
+          SLACK_CHANNEL: C01GY7ZP4HM
+          SLACK_FOOTER: 'Blackbaud Sky Build User'

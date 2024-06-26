@@ -1,0 +1,30 @@
+name: Go
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+jobs:
+  go:
+    uses: openconfig/common-ci/.github/workflows/basic_go.yml@c2294c3c86c90e75e58c24a40d6f7f3364bbae9d
+    with:
+      static-analysis-excludes-regex: exampleoc
+      skip-gofmt: true
+      skip-staticcheck: true
+
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Go
+      uses: actions/setup-go@v3
+      with:
+        go-version: 'stable'
+
+    - name: Generate and Check Diff
+      # Ignore whitespace because goimports seems to modifying the generated commands inconsistently.
+      run: |
+        go generate ./...
+        git diff --exit-code --ignore-all-space --ignore-blank-lines 

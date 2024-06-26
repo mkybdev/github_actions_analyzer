@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  push:
+    branches:
+    - master
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+    - uses: actions/setup-node@v1
+      with:
+        node-version: '12.x'
+        registry-url: 'https://registry.npmjs.org'
+    - run: npm install
+    - run: npm test
+    - run: node deploy.js
+      if: github.ref == 'refs/heads/master'
+      env:
+        REDDIT_KEY: ${{ secrets.REDDIT_KEY }}
+        REDDIT_SECRET: ${{ secrets.REDDIT_SECRET }}
+        REDDIT_USER: ${{ secrets.REDDIT_USER }}
+        REDDIT_PASS: ${{ secrets.REDDIT_PASS }}

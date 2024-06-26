@@ -1,0 +1,46 @@
+name: Publish to NuGet
+
+# Controls when the action will run. 
+on:
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+
+env:
+  nuGetVersionNumber: 4.2
+  nuGetFullVersionNumber: 4.2.${{ github.run_number }}
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [windows-2019]
+        # this is fixed to just one version so we only run the push operation once
+        dotnet-version: [ '7.0.x' ]
+    steps:
+    - uses: actions/checkout@v1
+    - name: Setup dotnet CLI
+      uses: actions/setup-dotnet@v3.2.0
+      with:
+        dotnet-version: | 
+          3.1.x
+          5.0.x
+          6.0.x
+          7.0.x
+    - name: Prepare Legacy NuGet
+      run: |
+        cd .\.nuget
+        ren NuGet.ex_ NuGet.exe
+        cd ..
+        .nuget\NuGet.exe restore Chinchilla.StateManagement.sln
+    - name: Build with dotnet CLI
+      run: dotnet build --configuration Release .\Chinchilla.StateManagement.sln
+    - name: Pack with dotnet CLI
+      run: |
+        forfiles /s /m Chinchilla.StateManagement.csproj /c "cmd /c dotnet pack @PATH -c Release -p:Version=${{ env.nuGetVersionNumber }} -p:PackageVersion=${{ env.nuGetFullVersionNumber }} --include-symbols -p:SymbolPackageFormat=snupkg --include-source -o ../Packaged"
+    - name: Push with dotnet CLI
+      run: |
+        .nuget\NuGet.exe source Add -Name "GitHub" -Source "https://nuget.pkg.github.com/cdmdotnet/index.json" -UserName cdmdotnet -Password ${{ secrets.NUGET_PUBLISH_TOKEN }}
+        .nuget\NuGet.exe setapikey ${{ secrets.NUGET_PUBLISH_TOKEN }} -Source "https://nuget.pkg.github.com/cdmdotnet/index.json"
+        dotnet nuget push Packaged\*.nupkg -k ${{ secrets.NUGET_PUBLISH_TOKEN }} -s https://api.nuget.org/v3/index.json

@@ -1,0 +1,384 @@
+name: Upload release artifacts
+
+on:
+  push:
+    tags:
+      - "*"
+
+jobs:
+  create_release:
+    name: Create release
+    runs-on: ubuntu-latest
+    outputs:
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+    steps:
+    - name: Create release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: Release ${{ github.ref }}
+        draft: true
+        prerelease: false
+
+  build_singularity_and_upload:
+    needs: create_release
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: 3.12
+    - uses: eWaterCycle/setup-apptainer@v2
+      with:
+        apptainer-version: 1.2.5
+
+    - name: Get version
+      id: get_version
+      run: |
+        echo "version=$(echo $GITHUB_REF | cut -d / -f 3)" >> $GITHUB_OUTPUT
+
+    - name: Create singularity image
+      id: create_image
+      run: |
+        PACKAGE=bali-phy-${{ steps.get_version.outputs.version }}-linux64-intel-singularity.sif
+        singularity build --fakeroot --build-arg version=${{ steps.get_version.outputs.version }} ~/${PACKAGE} Singularity
+        echo "archive_name=${PACKAGE}" >> $GITHUB_OUTPUT
+        echo "archive_path=${HOME}/${PACKAGE}" >> $GITHUB_OUTPUT
+
+    - name: Upload Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create_release.outputs.upload_url }}
+        asset_path: ${{ steps.create_image.outputs.archive_path }}
+        asset_name: ${{ steps.create_image.outputs.archive_name }}
+        asset_content_type: application/octet-stream
+
+  build_and_upload:
+    needs: create_release
+    strategy:
+      matrix:
+        name: [ubuntu-gcc-11-20.04,
+               ubuntu-gcc-11-22.04,
+               ubuntu-gcc-14,
+               macos-xcode-15-intel,
+               macos-xcode-15-arm,
+               windows
+               ]
+
+        include:
+          - name: ubuntu-gcc-11-20.04
+            os: ubuntu-20.04
+            compiler: gcc
+            version: "11"
+            buildtype: "release"
+            arch: "linux64"
+
+          - name: ubuntu-gcc-11-22.04
+            os: ubuntu-22.04
+            compiler: gcc
+            version: "11"
+            buildtype: "release"
+            arch: "linux64"
+
+          - name: ubuntu-gcc-14
+            os: ubuntu-24.04
+            compiler: gcc
+            version: "14"
+            buildtype: "release"
+            arch: "linux64"
+
+          - name: macos-xcode-15-intel
+            os: macos-13
+            compiler: xcode
+            version: "15"
+            buildtype: "release"
+            arch: "mac-intel64"
+
+          - name: macos-xcode-15-arm
+            os: macos-14
+            compiler: xcode
+            version: "15"
+            buildtype: "debugoptimized"
+            arch: "mac-arm64"
+
+          - name: windows
+            os: ubuntu-24.04
+            compiler: mingw
+            version: "N/A"
+            buildtype: "release"
+            arch: "win64"
+
+    runs-on: ${{ matrix.os }}
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: 3.12
+
+    # Caches for different branches are isolated, so we don't need to put the branch name into the key.
+    # The total size for all caches in a repository is 5Gb.
+
+    - name: ccache
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+         key: ${{ matrix.name }}
+         restore-keys: |
+           ${{ matrix.name }}
+
+    - name: Install (Linux)
+      if: runner.os == 'Linux' && matrix.name != 'windows'
+      run: |
+        sudo apt-get install -y pandoc ccache
+        sudo apt-get install -y librange-v3-dev libeigen3-dev libcairo2-dev
+        sudo apt-get install -y r-base gnuplot
+
+        if [ "${{ matrix.compiler }}" = "gcc" ] ; then
+          echo "Installing g++-${{ matrix.version }}"
+          if [ ${{ matrix.os }} = ubuntu-20.04 ] ; then
+              # For newer GCCs:
+              sudo add-apt-repository ppa:ubuntu-toolchain-r/test
+              sudo apt-get update
+          fi
+          echo sudo apt-get install -y g++-${{ matrix.version }}
+          sudo apt-get install -y g++-${{ matrix.version }}
+          g++-${{ matrix.version }} --version
+          echo "CC=ccache gcc-${{ matrix.version }}" >> $GITHUB_ENV
+          echo "CXX=ccache g++-${{ matrix.version }}" >> $GITHUB_ENV
+        else
+          echo "Installing clang-${{ matrix.version }}"
+          sudo apt-get install -y clang-${{ matrix.version }}
+          echo "CC=ccache clang-${{ matrix.version }}" >> $GITHUB_ENV
+          echo "CXX=ccache clang++-${{ matrix.version }}" >> $GITHUB_ENV
+        fi
+
+        sudo rm -rf /usr/local/share/boost
+        if [ ${{ matrix.os }} = ubuntu-24.04 ] ; then
+            # 24.04 has boost.json
+            sudo apt-get install -y libboost-all-dev
+        else
+            # 22.04 and earlier do not have boost.json
+            ( cd
+              curl -O -L https://boostorg.jfrog.io/artifactory/main/release/1.85.0/source/boost_1_85_0.tar.gz
+              tar -xzf boost_1_85_0.tar.gz
+              cd boost_1_85_0
+              ./bootstrap.sh --with-libraries=atomic,chrono,filesystem,system,regex,thread,date_time,program_options,math,serialization,random,json --prefix=../installed-boost-1.85.0
+              ./b2 install
+              echo -e "\n    BOOST root is at $(cd ../installed-boost-1.85.0; pwd)\n"
+              echo BOOST_ROOT=$(cd ../installed-boost-1.85.0; pwd) >> $GITHUB_ENV
+            )
+        fi
+
+    - name: Install (Linux -> Windows [cross])
+      if: matrix.name == 'windows'
+      run: |
+        # For mingw/gcc-12. 
+        cat /etc/apt/sources.list
+        sudo sed -i 's/jammy/lunar/g' /etc/apt/sources.list
+
+        sudo apt-get update
+        sudo apt-get install -y pandoc ccache
+        sudo apt-get install -y dos2unix g++-mingw-w64 wine64 zstd
+
+    - name: Select XCode version (macOS)
+      if: runner.os == 'macOS'
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: ${{ matrix.version }}
+
+    - name: Install (macOS)
+      if: runner.os == 'macOS'
+      run: |
+          export HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 # Don't try and install python3.12
+          brew install pkg-config pandoc ccache coreutils
+          brew install boost eigen range-v3 cairo fmt
+          brew install gnuplot r
+          echo "CC=ccache clang" >> $GITHUB_ENV
+          echo "CXX=ccache clang++" >> $GITHUB_ENV
+          if [[ $(uname -m) == 'arm64' ]] ; then echo "BOOST_ROOT=/opt/homebrew" >> $GITHUB_ENV ; fi
+
+    - name: Install meson
+      run: |
+        python3 -mpip install meson ninja
+
+    - name: Make windows sysroot and generate cross file
+      if: matrix.name == 'windows'
+      # This command also generates the cross file
+      run: |
+        ${GITHUB_WORKSPACE}/scripts/make_winroot.sh
+
+    - name: Configure
+      env:
+        OSX_VERSION_MIN: "11.0"
+      run: |
+        if [ ${{ runner.os }} = "macOS" ] && [ -n "${OSX_VERSION_MIN}" ]; then
+           MIN="-mmacosx-version-min=${OSX_VERSION_MIN}"
+           export CFLAGS="$CFLAGS $MIN"
+           export CXXFLAGS="$CXXFLAGS $MIN"
+           export LDFLAGS="$LDFLAGS $MIN"
+        fi
+        CPPARGS="-g"
+        if [ "${{ matrix.cxxflags }}" != "" ] ; then
+           CPPARGS="$CPPARGS ${{ matrix.cxxflags }}"
+        fi
+        if [ "${{ matrix.arch }}" = "win64" ]; then
+           ARGS="${ARGS} --cross-file=win64-cross.txt"
+        fi
+        if [ "${{ runner.os }}" = "Linux" ] && [ "${{ matrix.name }}" != "windows" ] && [ "${{ matrix.sanitize }}" != "" ] ; then
+           # Address sanitizer can't find its dylibs on OS X?
+           ARGS="${ARGS} -Db_sanitize=${{ matrix.sanitize }}"
+        fi
+        echo meson setup build --prefix=$HOME/local --buildtype=${{ matrix.buildtype }} -Dcpp_args="$CPPARGS" ${ARGS}
+        meson setup build --prefix=$HOME/local --buildtype=${{ matrix.buildtype }} -Dcpp_args="$CPPARGS" ${ARGS}
+
+    - name: Upload meson log if configure failed
+      uses: actions/upload-artifact@v3
+      if: failure()
+      with:
+        name: meson-log-${{ matrix.name }}
+        path: ${{ github.workspace }}/build/meson-logs/meson-log.txt
+
+    - name: Build
+      run: |
+        ccache -p
+        ccache -s
+        ninja -C build install -j4
+        ccache -s
+
+    - name: Get version
+      id: get_version
+      run: |
+        echo "version=$(echo $GITHUB_REF | cut -d / -f 3)" >> $GITHUB_OUTPUT
+
+    - name: Copy shared libs (Linux)
+      if: matrix.arch == 'linux64'
+      run: |
+        OUTPUT=$HOME/local
+        cp $(${CXX} -print-file-name=libstdc++.so.6) $OUTPUT/lib/bali-phy/libstdc++.so.6
+        if [ -n "${BOOST_ROOT}" -a -e "${BOOST_ROOT}/lib" ] ; then
+            # copy boost shared libs if they exist
+            cp ${BOOST_ROOT}/lib/libboost*so* ${OUTPUT}/lib/bali-phy/
+        else
+            # apparently this only works for system libraries.
+            for libname in $(ldd ${OUTPUT}/bin/bali-phy | grep libboost | sed s'/\s*lib\(boost.*\) =>.*/\1/') ; do
+                echo cp $($CXX --print-file-name lib${libname}) ${OUTPUT}/lib/bali-phy/
+                cp $($CXX --print-file-name lib${libname}) ${OUTPUT}/lib/bali-phy/
+            done
+        fi
+        ldd ${OUTPUT}/bin/bali-phy
+
+    - name: Copy shared libs (Windows)
+      if: matrix.arch == 'win64'
+      run: |
+        OUTPUT=$HOME/local
+        CXX=x86_64-w64-mingw32-g++-posix
+        # Copy compiler DLLS
+        for libname in gcc_s_seh-1 stdc++-6 ssp-0 winpthread-1 ; do
+            cp $($CXX --print-file-name lib${libname}.dll) ${OUTPUT}/bin
+        done
+        cp /home/runner/win_root/mingw64/bin/libboost_*.dll ${OUTPUT}/bin
+
+    - name: Ad hoc sign Mac executables
+      if: runner.os == 'macOS'
+      run: |
+        brew install findutils file-formula
+        OUTPUT=$HOME/local
+        for exe in $(gfind ${OUTPUT} -type f -executable -exec file --mime-type '{}' \; | grep x-mach-binary | sed 's/: application.*//') ; do
+           echo codesign -s - ${exe}
+           codesign -s - ${exe}
+        done
+
+    - name: Test
+      run: |
+        export seed=$RANDOM
+        if [ "${{ matrix.name }}" = "windows" ] ; then
+          export WINEPATH=$(winepath -w $HOME/local/bin)
+          BALIPHY="wine bali-phy"
+          STATREPORT="wine statreport"
+        else
+          export PATH=$HOME/local/bin:$PATH
+          BALIPHY=bali-phy
+          STATREPORT=statreport
+        fi
+        echo "Running tests with seed=$seed"
+
+        echo ::group::Basic tests
+        ${BALIPHY} help
+        cp $HOME/local/share/doc/bali-phy/examples/5S-rRNA/5d-muscle.fasta .
+        ${BALIPHY} --seed=$seed 5d-muscle.fasta --test
+        ${BALIPHY} --seed=$seed 5d-muscle.fasta --iter=50
+        ${BALIPHY} --seed=$(($seed+1)) 5d-muscle.fasta --iter=50
+        ${STATREPORT} 5d-muscle-1/C1.log
+        if [ "${{ matrix.name }}" != "windows" ] ; then
+            bp-analyze 5d-muscle-1 5d-muscle-2
+        fi
+        ${BALIPHY} --seed=$seed -m tests/prob_prog/demos/airline/Model.hs --test -V4
+
+        # Skip the rest of the tests if this is a DEBUG_MACHINE test.
+        skip=none
+        case "${{ matrix.name }}" in
+          *-DEBUG_MACHINE) skip=some ;;
+          *-sanitize) skip=most ;;
+        esac
+
+        if [ "$skip" = "none" ] ; then
+            echo ::group::Test suite
+            cd tests
+            ./run-tests.py ${BALIPHY} --seed=$seed
+            cd
+            echo ::endgroup::
+        else
+            echo ::group::Reduced test suite
+            ( cd tests/prob_prog/demos ; ../../run-tests.py ${BALIPHY} --seed=$seed )
+            ( cd tests/prob_prog/coal_mining ; ../../run-tests.py ${BALIPHY} --seed=$seed )
+            ( cd tests/prob_prog/cluster ; ../../run-tests.py ${BALIPHY} --seed=$seed )
+            cd
+            echo ::endgroup::
+        fi
+
+        if [ "$skip" != "most" ] ; then
+           git clone https://gitlab.com/testiphy/testiphy.git
+           cd testiphy
+           rm -rf tests/likelihood/one-sequence
+
+           echo ::group::testiphy variable A
+           ./testiphy ${BALIPHY} --seed=$seed
+           echo ::endgroup::
+
+             echo ::group::testiphy fixed A
+             ./testiphy ${BALIPHY} --seed=$seed -Inone
+             echo ::endgroup::
+        fi
+
+    - name: Upload tests if they failed
+      uses: actions/upload-artifact@v3
+      if: failure()
+      with:
+        name: tests-${{ matrix.name }}
+        path: tests
+
+    - name: Create tarball
+      id: create_tarball
+      run: |
+        OUTPUT=$HOME/local
+        PACKAGE=bali-phy-${{ steps.get_version.outputs.version }}
+        ARCH=${{ matrix.arch }}
+        if [ "$ARCH" = linux64 ] ; then ARCH=${{ matrix.os }} ; fi
+        TAR=${PACKAGE}-${ARCH}.tar.gz
+        cp -a $OUTPUT $PACKAGE
+        tar -zcf $TAR ${PACKAGE}
+        echo "archive=${TAR}" >> $GITHUB_OUTPUT
+
+    - name: Upload Release Asset
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ needs.create_release.outputs.upload_url }}
+        asset_path: ./${{ steps.create_tarball.outputs.archive }}
+        asset_name: ${{ steps.create_tarball.outputs.archive }}
+        asset_content_type: application/zip

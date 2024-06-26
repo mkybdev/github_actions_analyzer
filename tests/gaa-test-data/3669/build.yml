@@ -1,0 +1,84 @@
+name: Test and publish
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+  workflow_dispatch:
+  schedule:
+    - cron: '0 20 * * 5'
+
+jobs:
+  lint:
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.1.7
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install black
+        run: pip install black
+      - name: Lint with black
+        run: black --check --diff .
+
+  test:
+    runs-on: ubuntu-20.04
+    strategy:
+      matrix:
+        python-version: [ '3.8', '3.9', '3.10', '3.11', '3.12' ]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.1.7
+      - name: Start rocket.chat server
+        uses: isbang/compose-action@v2.0.0
+        with:
+          compose-file: docker-compose.yml
+        env:
+          ROCKETCHAT_LICENSE: ${{ secrets.ROCKETCHAT_LICENSE }}
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install dependencies
+        run: pip install pytest-cov requests
+      - name: Wait for rocket.chat server to be online
+        run: until curl --silent http://localhost:3000/api/info/; do sleep 15; echo "waiting for Rocket.Chat server to start"; done;
+        timeout-minutes: 5
+      - name: Run tests
+        run: pytest tests rocketchat_API -x --cov-report xml --cov=./
+      - name: Upload code coverage
+        uses: codecov/codecov-action@v4
+        with:
+          verbose: true
+          files: coverage.xml
+          fail_ci_if_error: true
+        env:
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  publish:
+    runs-on: ubuntu-latest
+    if: ${{ github.ref == 'refs/heads/master' }}
+    needs: test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.1.7
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install setuptools wheel twine
+      - name: Build and publish
+        env:
+          TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}
+          TWINE_PASSWORD: ${{ secrets.PYPI_PASSWORD }}
+        run: |
+          python setup.py sdist bdist_wheel
+          twine upload --skip-existing dist/*

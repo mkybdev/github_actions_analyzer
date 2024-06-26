@@ -1,0 +1,27 @@
+name: JNI Bind Build/Test Status
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+permissions:
+  contents: read
+
+jobs:
+  linux_test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: test
+      run: bazel test --cxxopt='-std=c++17' --repo_env=CC=clang --test_output=errors ...
+
+  # NOTE: Mac is only running a small subset of targets due to an unresolved
+  # issue in Bazel. When this is fixed in the future I will expand testing.
+  macos_test:
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: test
+      run: bazel test --cxxopt='-std=c++17' --repo_env=CC=clang --test_output=errors metaprogramming/...

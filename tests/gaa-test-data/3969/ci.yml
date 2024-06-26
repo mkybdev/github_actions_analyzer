@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        toolset: [mingw, vs2019, vs2022]
+        platform: [x64, x86]
+        use_asm: [1, 0]
+        configuration: [Debug, Release]
+        include:
+          # MinGW builds are done on Linux, since it's more up-to-date there,
+          # and it's much faster.
+          - {toolset: mingw, os: ubuntu-latest}
+          - {toolset: vs2019, os: windows-2019}
+          - {toolset: vs2022, os: windows-2022}
+        exclude:
+          - {platform: x64, use_asm: 1}
+          - {toolset: mingw, use_asm: 1}
+    runs-on: '${{ matrix.os }}'
+    name: 'Build: ${{ matrix.toolset }} / ${{ matrix.platform }} / asm${{ matrix.use_asm }} / ${{ matrix.configuration }}'
+    env:
+      TOOLSET: '${{ matrix.toolset }}'
+      PLATFORM: '${{ matrix.platform }}'
+      CONFIGURATION: '${{ matrix.configuration }}'
+      BOOST_VERSION: 1.81.0
+      CMAKE_FLAGS: -D 'AES_TOOLS_ASM=${{ matrix.use_asm }}'
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Cache Boost
+        uses: actions/cache@v4
+        with:
+          path: './build/boost_*.tar.gz'
+          key: 'boost_${{ env.BOOST_VERSION }}'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Set up MinGW
+        uses: egor-tensin/setup-mingw@v2
+        with:
+          platform: '${{ matrix.platform }}'
+        if: matrix.toolset == 'mingw'
+      - name: Build Boost
+        run: make deps
+      - name: Build
+        run: make install
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: 'aes-tools-${{ matrix.toolset }}-${{ matrix.platform }}-asm${{ matrix.use_asm }}-${{ matrix.configuration }}'
+          path: './build/install/'
+          if-no-files-found: error
+      - name: Test
+        run: make test
+        if: runner.os == 'Windows'

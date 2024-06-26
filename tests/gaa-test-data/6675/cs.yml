@@ -1,0 +1,72 @@
+name: CS
+
+on: [ pull_request ]
+
+jobs:
+  php-cs-fixer:
+    name: PHP-CS-Fixer
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: PHP-CS-Fixer
+        uses: docker://oskarstark/php-cs-fixer-ga
+
+  composer-normalize:
+    name: Composer Normalize
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: 8.1
+
+      - name: Install dependencies
+        run: composer install --no-scripts
+
+      - name: Ensure lock file is up to date
+        run: composer update --lock
+
+      - name: Run composer normalize
+        run: composer normalize --no-update-lock --diff --dry-run
+
+  lint:
+    name: Lint
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v2
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v2-beta
+        with:
+          node-version: 14
+
+      - run: yarn install
+
+      - name: Super-Linter
+        uses: github/super-linter/slim@v4
+        env:
+          VALIDATE_ALL_CODEBASE: false
+          DEFAULT_BRANCH: 2.1.x
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSS_FILE_NAME: .stylelintrc.json
+          VALIDATE_YAML: true
+          VALIDATE_JSON: true
+          VALIDATE_XML: true
+          VALIDATE_MD: true
+          VALIDATE_GITLEAKS: true
+          VALIDATE_BASH: true
+          VALIDATE_PHP_BUILTIN: true
+          LINTER_RULES_PATH: .
+          VALIDATE_JAVASCRIPT_ES: true
+          VALIDATE_CSS: true

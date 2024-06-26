@@ -1,0 +1,31 @@
+name: Docs
+
+on:
+  push:
+    branches:
+      - master
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  default:
+
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux
+    steps:
+    - name: Get required packages
+      run: pacman --noconfirm --noprogressbar -Syu base-devel clang git libpipewire libpulse lm_sensors notmuch openssl rsync
+    - uses: dtolnay/rust-toolchain@stable
+    - name: Version information
+      run: rustc --version; cargo --version
+    - uses: actions/checkout@v4
+    - name: Generate docs
+      run: cargo doc --all-features --no-deps
+    - name: Create index.html
+      run: echo "<meta http-equiv=\"Refresh\" content=\"0; url='/i3status-rust/i3status_rs'\" />" > target/doc/index.html
+    - name: Deploy 🚀
+      uses: JamesIves/github-pages-deploy-action@v4
+      with:
+        folder: target/doc # The folder the action should deploy.

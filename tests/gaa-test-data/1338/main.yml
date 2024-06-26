@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+  schedule:
+    # * is a special character in YAML so you have to quote this string
+    - cron:  '0 1 * * *'
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v2
+    - uses: nanasess/setup-chromedriver@v1.0.5
+    - uses: actions/cache@v2
+      with:
+        path: ~/.rbenv/versions
+        key: ${{ runner.os }}-rbenv-${{ hashFiles('.ruby-version') }}
+        restore-keys: |
+          ${{ runner.os }}-rbenv-
+    - uses: hashicorp/setup-terraform@v2
+      with:
+        terraform_version: 1.1.7
+    - name: terraform fmt
+      run: terraform fmt -diff -check
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v2
+      with:
+        languages: javascript
+    - name: Autobuild
+      uses: github/codeql-action/autobuild@v2
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v2
+    - uses: ruby/setup-ruby@v1
+      with:
+        bundler-cache: true # runs 'bundle install' and caches installed gems automatically
+    - name: Run a multi-line script
+      env:
+        DISPLAY: :99
+      run: |
+        xvfb-run bundle exec rake

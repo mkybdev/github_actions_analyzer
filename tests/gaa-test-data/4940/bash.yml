@@ -1,0 +1,25 @@
+name: Bash tests
+
+on:
+  push:
+    paths:
+      - 'bash/**'
+      - '.github/workflows/bash.yml'
+
+jobs:
+  test_bash:
+    name: Test Bash
+    runs-on: ubuntu-latest
+    if: |
+      ! contains(github.event.head_commit.message, '[ci skip]') &&
+      ! contains(github.event.head_commit.message, '[skip ci]')
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Install bats
+        run: |
+          sudo apt install bats
+      - name: Run the tests
+        run: |
+          cd bash
+          ../bin/test_all.sh "*.sh" "bats *_test.sh"

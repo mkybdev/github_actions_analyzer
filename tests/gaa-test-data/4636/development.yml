@@ -1,0 +1,66 @@
+name: Development
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ${{matrix.os}}-latest
+    continue-on-error: ${{matrix.experimental}}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu
+          - macos
+
+        ruby:
+          - 2.7
+          - "3.0" # quotes ensure this isn't misinterpreted as Integer 3: https://github.com/actions/runner/issues/849
+          - 3.1
+          - 3.2
+          - 3.3
+
+        experimental: [false]
+        env: [""]
+
+        include:
+          - os: macos
+            ruby: truffleruby-head
+            experimental: true
+          - os: ubuntu
+            ruby: truffleruby-head
+            experimental: true
+          - os: ubuntu
+            ruby: jruby
+            experimental: true
+          - os: ubuntu
+            ruby: head
+            experimental: true
+
+    steps:
+    - uses: actions/checkout@v2
+    - uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: ${{matrix.ruby}}
+        bundler-cache: true
+
+    - name: Run tests
+      timeout-minutes: 6
+      run: |
+        ${{matrix.env}} bundle exec rspec
+
+  linting:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - uses: ruby/setup-ruby@v1
+      with:
+        ruby-version: 3.2
+        bundler-cache: true
+
+    - name: Run rubocop
+      timeout-minutes: 6
+      run: |
+        bundle exec rake rubocop

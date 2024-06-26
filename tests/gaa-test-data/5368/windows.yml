@@ -1,0 +1,37 @@
+name: Windows Build
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        sys: ["MINGW32", "UCRT64"]
+    defaults:
+      run:
+        shell: msys2 {0}
+    name: MSYS2 ${{ matrix.sys }}
+    steps:
+
+    - name: Set up MSYS2
+      uses: msys2/setup-msys2@v2
+      with:
+        msystem: ${{ matrix.sys }}
+        pacboy: >-
+          gcc:p
+          cmake:p
+          ninja:p
+          SDL2:p
+          SDL2_ttf:p
+
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        submodules: true
+
+    - name: Build
+      run: |
+        mkdir -p out/debug
+        cd out/debug
+        cmake -G"Ninja" -DCMAKE_BUILD_TYPE=Debug -DCMAKE_COMPILE_WARNING_AS_ERROR=YES ../../
+        ninja

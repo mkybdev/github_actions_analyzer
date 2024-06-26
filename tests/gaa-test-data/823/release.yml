@@ -1,0 +1,16 @@
+name: Release
+
+on:
+  release:
+    types: [published]
+
+env:
+  REPOSITORY_NAME: '${{ github.event.repository.name }}'
+  PROJECT_NAME: 'openponk-${{ github.event.repository.name }}'
+  VERSION: ${{ github.event.release.tag_name }}
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  RUN_ID: ${{ github.run_id }}
+  
+jobs:
+  OP:
+    uses: OpenPonk/ci-scripts/.github/workflows/test-release.yml@master

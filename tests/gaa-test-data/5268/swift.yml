@@ -1,0 +1,31 @@
+name: Swift
+
+on: [push]
+
+jobs:
+  build:
+
+    runs-on: macos-latest
+
+    steps:
+
+# Actions
+    - uses: actions/checkout@v2
+  
+# Check Environment
+    - name: Check Swift
+      run: swift --version
+
+# Install Dependencies
+    - name: Install Homebrew
+      run: /usr/bin/ruby -e "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install)"
+    - name: Install pkg-config
+      run: brew install pkg-config
+    - name: Install libressl
+      run: brew install libressl
+
+# Actually do something
+    - name: Build
+      run: swift build -v
+    - name: Run tests
+      run: swift test -v

@@ -1,0 +1,44 @@
+on: [push, pull_request]
+
+jobs:
+  codeql-sast:
+    name: CodeQL SAST scan
+    uses: alphagov/govuk-infrastructure/.github/workflows/codeql-analysis.yml@main
+    permissions:
+      security-events: write
+
+  dependency-review:
+    name: Dependency Review scan
+    uses: alphagov/govuk-infrastructure/.github/workflows/dependency-review.yml@main
+  
+  test_matrix:
+    strategy:
+      fail-fast: false
+      matrix:
+        ruby: [3.1, 3.2, 3.3]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+      - run: bundle exec rake
+
+  # Branch protection rules cannot directly depend on status checks from matrix jobs.
+  # So instead we define `test` as a dummy job which only runs after the preceding `test_matrix` checks have passed.
+  # Solution inspired by: https://github.community/t/status-check-for-a-matrix-jobs/127354/3
+  test:
+    needs: test_matrix
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "All matrix tests have passed 🚀"
+
+  publish:
+    needs: test
+    if: ${{ github.ref == 'refs/heads/main' }}
+    permissions:
+      contents: write
+    uses: alphagov/govuk-infrastructure/.github/workflows/publish-rubygem.yml@main
+    secrets:
+      GEM_HOST_API_KEY: ${{ secrets.ALPHAGOV_RUBYGEMS_API_KEY }}

@@ -1,0 +1,111 @@
+# This is a reusable workflow that is called from the pr, snapshot, and release workflows
+# This workflow runs the complete Wheels Framework Test Suites
+name: Wheels Test Suites
+# We are a reusable Workflow only
+on:
+  workflow_call:
+    secrets:
+      SLACK_WEBHOOK_URL:
+        required: true
+jobs:
+  tests:
+    name: Test Suites
+    runs-on: ubuntu-20.04
+    continue-on-error: ${{ matrix.experimental }}
+    strategy:
+      fail-fast: false
+      matrix:
+        commandbox_version: [ "6.0.0" ]
+        jdkVersion: [ "21" ]
+        experimental: [false]
+        cfengine: [ "lucee@5", "lucee@6", "adobe@2018", "adobe@2021", "adobe@2023" ]
+        dbengine: ["mysql", "postgres", "sqlserver", "h2"]
+        exclude:
+          # - cfengine: lucee@5
+          #   dbengine: mysql
+          # - cfengine: lucee@5
+          #   dbengine: postgres
+          # - cfengine: lucee@5
+          #   dbengine: sqlserver
+          # - cfengine: lucee@5
+          #   dbengine: h2
+          # - cfengine: lucee@6
+          #   dbengine: mysql
+          # - cfengine: lucee@6
+          #   dbengine: postgres
+          # - cfengine: lucee@6
+          #   dbengine: sqlserver
+          # - cfengine: lucee@6
+          #   dbengine: h2
+          # - cfengine: adobe@2018
+          #   dbengine: mysql
+          # - cfengine: adobe@2018
+          #   dbengine: postgres
+          # - cfengine: adobe@2018
+          #   dbengine: sqlserver
+          - cfengine: adobe@2018
+            dbengine: h2
+          # - cfengine: adobe@2021
+          #   dbengine: mysql
+          # - cfengine: adobe@2021
+          #   dbengine: postgres
+          # - cfengine: adobe@2021
+          #   dbengine: sqlserver
+          - cfengine: adobe@2021
+            dbengine: h2
+          # - cfengine: adobe@2023
+          #   dbengine: mysql
+          # - cfengine: adobe@2023
+          #   dbengine: postgres
+          # - cfengine: adobe@2023
+          #   dbengine: sqlserver
+          - cfengine: adobe@2023
+            dbengine: h2
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Copy server.json files
+        run: |
+          cp ./docker/${{ matrix.cfengine }}/server.json ./
+          cp ./docker/${{ matrix.cfengine }}/CFConfig-actions.json ./CFConfig.json
+          cp ./docker/${{ matrix.cfengine }}/settings.cfm ./app/config/settings.cfm
+
+      - name: Start external DB if needed (${{ matrix.dbengine }}) ...
+        if: ${{ matrix.dbengine != 'h2' }}
+        run: docker-compose up -d ${{ matrix.dbengine }}
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: ${{ matrix.jdkVersion }}
+
+      - name: Setup CommandBox CLI
+        uses: Ortus-Solutions/setup-commandbox@v2.0.1
+        with:
+          version: ${{ matrix.commandbox_version }}
+
+      - name: Install Dependencies
+        run: |
+          # Core dependencies
+          box install
+
+      - name: Start ${{ matrix.cfengine }} Server
+        run: |
+          box server start serverConfigFile="server.json" --noSaveSettings --debug
+
+      - name: Running onServerInstall Script for Adobe2021 and Adobe2023
+        if: ${{ matrix.cfengine == 'adobe@2021' }} || ${{ matrix.cfengine == 'adobe@2023' }}
+        run: box run-script onServerInstall
+
+      - name: Run Tests ${{ matrix.cfengine }} ${{ matrix.dbengine }}
+        run: |
+          docker/github/core-tests.sh ${{ matrix.cfengine }} ${{ matrix.dbengine }}
+
+      - name: Failure Debugging Info
+        if: ${{ failure() }}
+        run: |
+          box version
+          box server info serverConfigFile="server.json" --json
+          box server log serverConfigFile="server.json"

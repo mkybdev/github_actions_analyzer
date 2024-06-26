@@ -1,0 +1,103 @@
+name: PHP
+
+on:
+  - push
+  - pull_request
+
+permissions: read-all
+
+env:
+  php-version: '8.2'
+  php-extensions: ctype, curl, iconv, intl, json, pcre, session, simplexml, tokenizer
+
+jobs: 
+  phpunit:
+    name: PHPUnit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+        with:
+          persist-credentials: false
+
+      - name: Setup PHP, with Composer and extensions
+        uses: shivammathur/setup-php@6d7209f44a25a59e904b1ee9f3b0c33ab2cd888d
+        with:
+          php-version: ${{ env.php-version }}
+          extensions: ${{ env.php-extensions }}
+
+      - name: Get Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
+
+      - name: Cache Composer packages
+        uses: actions/cache@13aacd865c20de90d75de3b17ebe84f7a17d57d2
+        with:
+          path: ${{ steps.composer-cache.outputs.dir }}
+          key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-composer-
+
+      - run: composer validate --strict --ansi
+      
+      - name: Install Composer packages
+        run: composer install --no-progress --ansi
+
+      - run: composer test --ansi
+
+  psalm:
+    name: Psalm
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+        with:
+          persist-credentials: false
+
+      - name: Setup PHP with Composer and extensions
+        uses: shivammathur/setup-php@6d7209f44a25a59e904b1ee9f3b0c33ab2cd888d
+        with:
+          php-version: ${{ env.php-version }}
+          extensions: ${{ env.php-extensions }}
+
+      - name: Get Composer cache directory
+        id: composer-cache
+        run: echo "dir=$(composer config cache-files-dir)" >> $GITHUB_OUTPUT
+
+      - name: Cache Composer packages
+        uses: actions/cache@13aacd865c20de90d75de3b17ebe84f7a17d57d2
+        with:
+          path: |
+            ${{ steps.composer-cache.outputs.dir }}
+            $HOME/.cache/psalm
+          key: ${{ runner.os }}-psalm-${{ hashFiles('**/composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-psalm-
+
+      - run: composer install --no-progress --ansi
+
+      - name: Run Psalm
+        run: php vendor/bin/psalm --output-format=github --long-progress
+
+  deploy:
+    name: Deploy
+    environment:
+      name: production
+      url: https://isitup.org
+    concurrency: production
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    needs:
+      - phpunit
+      - psalm
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install doctl
+        uses: digitalocean/action-doctl@135ac0aa0eed4437d547c6f12c364d3006b42824
+        with:
+          token: ${{ secrets.DIGITALOCEAN_ACCESS_TOKEN }}
+
+      - name: Create Apps Platform deployment
+        id: deployment
+        run: doctl apps create-deployment 7172ee3c-69f7-40cf-9bb4-ee712bbc7871 --force-rebuild --wait
+
+      - name: Get build logs
+        if: ${{ always() }}
+        run: doctl apps logs 7172ee3c-69f7-40cf-9bb4-ee712bbc7871 --type build

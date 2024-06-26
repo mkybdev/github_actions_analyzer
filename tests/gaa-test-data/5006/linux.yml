@@ -1,0 +1,178 @@
+---
+name: Linux CI
+on:
+  push:
+    branches:
+      - master
+  pull_request:
+    branches:
+      - master
+
+jobs:
+  build64:
+    name: Ubuntu 64-bit
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux with GCC
+          # - {os: ubuntu-18.04, llvm: '3.9', compiler: gcc}
+          # - {os: ubuntu-18.04, llvm: '4.0', compiler: gcc}
+          # - {os: ubuntu-18.04, llvm: '5.0', compiler: gcc}
+          - {os: ubuntu-18.04, llvm: '6.0', compiler: gcc}
+          - {os: ubuntu-18.04, llvm: 7, compiler: gcc}
+          - {os: ubuntu-18.04, llvm: 8, compiler: gcc}
+          - {os: ubuntu-18.04, llvm: 9, compiler: gcc}
+          - {os: ubuntu-20.04, llvm: 10, compiler: gcc}
+          - {os: ubuntu-20.04, llvm: 10, compiler: gcc, type: Debug}
+          # FIXME: Edit when KLEE is rebased to latest upstream.
+          - {os: ubuntu-20.04, llvm: 11, compiler: gcc, klee: 'no-klee'}
+          - {os: ubuntu-20.04, llvm: 12, compiler: gcc, klee: 'no-klee'}
+          - {os: ubuntu-22.04, llvm: 13, compiler: gcc, klee: 'no-klee'}
+
+          # Linux with Clang
+          # - {os: ubuntu-18.04, llvm: '3.9', compiler: clang}
+          # - {os: ubuntu-18.04, llvm: '4.0', compiler: clang}
+          # - {os: ubuntu-18.04, llvm: '5.0', compiler: clang}
+          - {os: ubuntu-18.04, llvm: '6.0', compiler: clang}
+          - {os: ubuntu-18.04, llvm: 7, compiler: clang}
+          - {os: ubuntu-18.04, llvm: 8, compiler: clang}
+          - {os: ubuntu-18.04, llvm: 9, compiler: clang}
+          - {os: ubuntu-20.04, llvm: 10, compiler: clang}
+          - {os: ubuntu-20.04, llvm: 10, compiler: clang, type: Debug}
+          # FIXME: Edit when KLEE is rebased to latest upstream.
+          - {os: ubuntu-20.04, llvm: 11, compiler: clang, klee: 'no-klee'}
+          - {os: ubuntu-20.04, llvm: 12, compiler: clang, klee: 'no-klee'}
+          - {os: ubuntu-22.04, llvm: 13, compiler: clang, klee: 'no-klee'}
+
+    runs-on: ${{matrix.os}}
+    steps:
+      - name: Checkout Symbiotic and submodules
+        uses: actions/checkout@v3
+        with:
+          submodules: true
+
+      # LLVM 7.0.x built by GCC is not ABI compatible with tools built by Clang
+      # and vice-versa.  Therefore, every instance of KLEE ended being killed
+      # by SIGSEGV.  LLVM 7.1 fixes this issue but it never made its way to
+      # Bionic's official repositories.  So let's use the LLVM repos instead.
+      #
+      # https://lists.llvm.org/pipermail/llvm-dev/2018-September/126564.html
+      - name: '[Bionic + LLVM 7.1] Add repositories'
+        if: matrix.os == 'ubuntu-18.04' && matrix.llvm == 7
+        run: |
+          wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+          sudo apt-add-repository "deb http://apt.llvm.org/bionic/ llvm-toolchain-bionic-7 main"
+
+      - name: Install dependencies
+        run: |
+          sudo apt update
+          sudo apt install ccache cmake clang-${{matrix.llvm}} \
+                           llvm-${{matrix.llvm}}-dev libc6-dev-i386 \
+                           libz3-dev
+
+      - name: Set environment
+        id: env
+        run: |
+          # Set buildtype
+          if [[ "${{matrix.type}}" != "" ]]; then
+            echo "BUILD_TYPE=${{matrix.type}}" >> $GITHUB_ENV
+          else
+            echo "BUILD_TYPE=RelWithDebInfo" >> $GITHUB_ENV
+          fi
+
+          # Build with sanitizers
+          CFLAGS="-fsanitize=address,undefined -g -fno-omit-frame-pointer"
+          CXXFLAGS="-fsanitize=address,undefined -g -fno-omit-frame-pointer"
+          LDFLAGS="-fsanitize=address,undefined"
+
+          # TODO: Fail on UBSAN
+          # CFLAGS="-fno-sanitize-recover=all $CFLAGS"
+          # CXXFLAGS="-fno-sanitize-recover=all $CXXFLAGS"
+
+          # Select compiler and set compiler flags
+          if [[ "${{matrix.compiler}}" = "clang" ]]; then
+            # Clang
+            CC="clang-${{matrix.llvm}}"
+            CXX="clang++-${{matrix.llvm}}"
+
+            # Use shared libasan otherwise LLVMsbt.so would be underlinked.
+            CFLAGS="-shared-libasan $CFLAGS"
+            CXXFLAGS="-shared-libasan $CXXFLAGS"
+
+            # Force coloured output
+            CFLAGS="-fcolor-diagnostics $CFLAGS"
+            CXXFLAGS="-fcolor-diagnostics $CXXFLAGS"
+          else
+            # GCC
+            CC="gcc"
+            CXX="g++"
+
+            # Force coloured output
+            CFLAGS="-fdiagnostics-color $CFLAGS"
+            CXXFLAGS="-fdiagnostics-color $CXXFLAGS"
+          fi
+
+          # Save the environment
+          echo "CC=$CC" >> $GITHUB_ENV
+          echo "CXX=$CXX" >> $GITHUB_ENV
+          echo "CFLAGS=$CFLAGS" >> $GITHUB_ENV
+          echo "CXXFLAGS=$CXXFLAGS" >> $GITHUB_ENV
+          echo "LDFLAGS=$LDFLAGS" >> $GITHUB_ENV
+
+          # Set up ccache
+          sudo /usr/sbin/update-ccache-symlinks
+          echo "/usr/lib/ccache" >> $GITHUB_PATH
+
+          # Bionic does not create symlinks to versioned clang
+          sudo ln -sfr /usr/bin/ccache /usr/lib/ccache/clang-${{matrix.llvm}}
+          sudo ln -sfr /usr/bin/ccache /usr/lib/ccache/clang++-${{matrix.llvm}}
+          echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE" >> $GITHUB_ENV
+          echo "CCACHE_COMPRESS=true" >> $GITHUB_ENV
+          echo "CCACHE_COMPRESSLEVEL=6" >> $GITHUB_ENV
+          echo "CCACHE_DIR=$GITHUB_WORKSPACE/.ccache" >> $GITHUB_ENV
+          echo "CCACHE_MAXSIZE=400M" >> $GITHUB_ENV
+          echo "::set-output name=timestamp::$(date -u -Iseconds)"
+
+      - name: Set up ccache
+        uses: actions/cache@v3
+        with:
+          path: .ccache
+          key: ${{matrix.os}}-${{matrix.llvm}}-${{matrix.compiler}}-${{matrix.type}}-${{steps.env.outputs.timestamp}}
+          restore-keys: ${{matrix.os}}-${{matrix.llvm}}-${{matrix.compiler}}-${{matrix.type}}
+
+      - name: Build Symbiotic
+        run: |
+          ./system-build.sh -j$(nproc) \
+                            build-type=${BUILD_TYPE} ${{matrix.klee}} \
+                            llvm-config=$(which llvm-config-${{matrix.llvm}})
+
+      - name: Run tests
+        # FIXME: Remove when KLEE is rebased to latest upstream.
+        if: matrix.llvm < 11
+        run: |
+          if [[ "${{matrix.compiler}}" = "clang" ]]; then
+            # * libclang_rt.asan-x86_64.so must be loaded as the first library
+            # * other compiler_rt libraries are not in /usr/lib
+            # See https://systemd.io/TESTING_WITH_SANITIZERS for details.
+            export LD_PRELOAD="$(clang-${{matrix.llvm}} -print-file-name=libclang_rt.asan-x86_64.so)"
+            export LD_LIBRARY_PATH="$(dirname $LD_PRELOAD)"
+          else
+            export LD_PRELOAD="$(gcc -print-file-name=libasan.so)"
+          fi
+
+          # Make symbiotic use correct clang & friends from PATH (e.g. no
+          # disguised ccache or problems with unversioned tools not being
+          # in PATH).
+          #
+          # Also, clang's ASAN and UBSAN expect unversioned llvm-symbolizer
+          # in PATH.
+          export PATH="$(llvm-config-${{matrix.llvm}} --bindir):$PATH"
+
+          # Due to LD_PRELOAD above, leak sanitizer was reporting leaks
+          # literally in everything that was executed, e.g. make, shell,
+          # python and other tools that are not under our control.
+          ASAN_OPTIONS=detect_leaks=0 make -C tests
+
+      - name: ccache statistics
+        run: ccache -s

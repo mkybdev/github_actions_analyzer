@@ -1,0 +1,45 @@
+name: ci
+
+on:
+  push:
+    paths:
+    - "**/*.py"
+    - "**/*.f90"
+
+env:
+  CMAKE_BUILD_PARALLEL_LEVEL: 4
+  CTEST_PARALLEL_LEVEL: 0
+  CTEST_NO_TESTS_ACTION: error
+
+
+jobs:
+
+  fortran:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - run: cmake -Bbuild
+    - run: cmake --build build
+    - run: ctest --test-dir build -V
+
+  python:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.x'
+
+    - run: pip install .[tests,lint]
+
+    - run: flake8
+    - run: mypy
+
+    - run: pytest

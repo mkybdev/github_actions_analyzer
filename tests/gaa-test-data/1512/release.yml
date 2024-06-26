@@ -1,0 +1,45 @@
+name: release
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: GoogleCloudPlatform/release-please-action@v3
+        id: release
+        with:
+          token: ${{ secrets.GH_TOKEN }}
+          release-type: ruby
+          version-file: lib/vagrant-vyos/version.rb
+
+      - uses: actions/checkout@v3
+        if: ${{ steps.release.outputs.release_created }}
+
+      - name: Set up Ruby 2.6
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: 2.6
+        if: ${{ steps.release.outputs.release_created }}
+
+      - name: Build
+        run: |
+          bundle config path vendor/bundle
+          bundle install --jobs 4 --retry 3
+          gem build *.gemspec
+        if: ${{ steps.release.outputs.release_created }}
+
+      - name: Publish
+        run: |
+          mkdir -p $HOME/.gem
+          touch $HOME/.gem/credentials
+          chmod 0600 $HOME/.gem/credentials
+          printf -- "---\n:rubygems_api_key: ${GEM_HOST_API_KEY}\n" > $HOME/.gem/credentials
+          gem push *.gem
+        if: ${{ steps.release.outputs.release_created }}
+        env:
+          GEM_HOST_API_KEY: ${{secrets.RUBYGEMS_AUTH_TOKEN}}

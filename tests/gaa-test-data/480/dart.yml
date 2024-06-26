@@ -1,0 +1,30 @@
+name: Dart CI
+
+on: [push]
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+
+    container: dart:latest
+
+    steps:
+      - uses: actions/checkout@v1
+
+      - name: Install dependencies
+        run: dart pub get
+
+      # - name: Install coverage
+      #   run: dart pub global activate coverage
+
+      - name: Run tests
+        run: dart run test
+
+      # - name: Run coverage
+      #   run: collect_coverage
+
+      # - name: Coveralls
+      #   uses: coverallsapp/github-action@master
+      #   with:
+      #     github-token: ${{ secrets.GITHUB_TOKEN }}

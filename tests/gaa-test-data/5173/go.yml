@@ -1,0 +1,48 @@
+name: update lists
+
+on:
+  schedule:
+    - cron:  '5 4 * * *'
+  push:
+    branches:
+      - 'master'
+    paths:
+      - '.github/workflows/go.yml'
+      - convert/*.go
+      - convert/go.*
+
+jobs:
+  build:
+    name: Update
+    runs-on: ubuntu-latest
+    steps:
+
+    - name: Set up Go 
+      uses: actions/setup-go@v3
+      with:
+        go-version: 1.22
+      id: go
+
+    - name: Check out code into the Go module directory
+      uses: actions/checkout@v3
+
+    - name: Build and update
+      run: |
+        cd convert
+        env CGO_ENABLED=0 go build -o convert .
+        ./convert
+
+    - name: Set up Git
+      env:
+        GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}        
+      run: |
+        git config user.name "auto-update-lists[bot]"
+        git config user.email "auto-update-lists[bot]@users.noreply.github.com"
+        git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git
+
+    - name: Commit and push changes
+      run: |
+        git pull origin master
+        git commit -m "auto update lists at $(date)" convert/*.txt
+        git push -f origin master
+

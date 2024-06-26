@@ -1,0 +1,50 @@
+name: Cluck2Sesame Build
+on: [push]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Install Ruby
+        uses: ruby/setup-ruby@477b21f02be01bcb8030d50f37cfec92bfa615b6
+        with:
+          ruby-version: 2.7
+
+      - name: Install MPLABX
+        run: |
+          sudo dpkg --add-architecture i386;
+          sudo apt update -y;
+          sudo apt install -y libc6:i386 libx11-6:i386 libxext6:i386 libstdc++6:i386 libexpat1:i386;
+          src/firmware/build/install-mplabx.sh;
+
+      - name: Install Ceedling
+        run: |
+          gem install rake;
+          gem install ceedling;
+
+      - name: Test
+        run: |
+          cd src/firmware;
+          ./ceedling test;
+          echo -e "\n\n[TEST FAILURE REPORTS]";
+          cat build/ceedling/generated/test/results/*.fail 2>/dev/null && exit 1;
+          echo -e "\n\n[TEST RUN SUCCESSFUL].";
+
+      - name: Build Release Artefact
+        run: |
+          cd src/firmware;
+          ./ceedling verbosity[4] release;
+
+      - name: Package Build Artefacts
+        run: |
+          mkdir -p output/Cluck2Sesame;
+          cp src/firmware/build/ceedling/generated/release/Cluck2Sesame.{elf,hex,hxl,map,sym,s} output/Cluck2Sesame;
+          cp src/schematics/Plots/Cluck2SesameSchematics.pdf output/Cluck2Sesame;
+
+      - name: Archive Build Artefacts
+        uses: actions/upload-artifact@v2
+        with:
+          name: Cluck2Sesame-Build
+          path: |
+            output/

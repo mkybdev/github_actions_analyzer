@@ -1,0 +1,104 @@
+---
+name: "Test"
+on:
+  pull_request:
+  push:
+
+env:
+  ACTIONS_ALLOW_UNSECURE_COMMANDS: True
+
+jobs:
+  tox:
+    name: "Test ${{ matrix.toxenv }}"
+    runs-on: "ubuntu-22.04"
+    strategy:
+      matrix:
+        include:
+          - python-version: "3.7"
+            toxenv: "py37"
+          - python-version: "3.8"
+            toxenv: "py38"
+          - python-version: "3.9"
+            toxenv: "py39"
+          - python-version: "3.10"
+            toxenv: "py310"
+    steps:
+      - name: "Check out repository"
+        uses: "actions/checkout@v3"
+      - name: "Set up Python ${{ matrix.python-version }}"
+        uses: "actions/setup-python@v3"
+        with:
+          python-version: "${{ matrix.python-version }}"
+      - name: Install homebrew
+        run: |
+          /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/master/install.sh)"
+          test -d ~/.linuxbrew && eval $(~/.linuxbrew/bin/brew shellenv)
+          test -d /home/linuxbrew/.linuxbrew && eval $(/home/linuxbrew/.linuxbrew/bin/brew shellenv)
+          echo "eval \$($(brew --prefix)/bin/brew shellenv)" >>~/.profile
+          echo "::add-path::/home/linuxbrew/.linuxbrew/bin"
+          brew --version
+      - name: Install Siegfried
+        run: |
+          brew install richardlehane/digipres/siegfried
+      - name: Install and configure clamav
+        run: |
+          brew install clamav
+      - name: Install disktype
+        run: |
+          brew install disktype
+      - name: Install md5deep
+        run: |
+          brew install md5deep
+      - name: Install sleuthkit
+        run: |
+          brew install sleuthkit
+      - name: Install bulk_extractor
+        run: |
+          brew install bulk_extractor
+      - name: Install unhfs
+        run: |
+          curl -sfL -o hfsexplorer-2021.10.9-bin.zip https://github.com/unsound/hfsexplorer/releases/download/hfsexplorer-2021.10.9/hfsexplorer-2021.10.9-bin.zip
+          mkdir /usr/share/hfsexplorer
+          unzip hfsexplorer-2021.10.9-bin.zip -d /usr/share/hfsexplorer/
+          chmod +x /usr/share/hfsexplorer/bin/unhfs
+      - name: Run install script
+        run: |
+          ./test-install.sh
+        shell: bash
+      - name: "Get pip cache dir"
+        id: "pip-cache"
+        run: |
+          echo "::set-output name=dir::$(pip cache dir)"
+      - name: "Cache pip packages"
+        uses: "actions/cache@v2"
+        with:
+          path: "${{ steps.pip-cache.outputs.dir }}"
+          key: "${{ runner.os }}-pip-${{ hashFiles('**/base.txt','**/test.txt') }}"
+          restore-keys: |
+            ${{ runner.os }}-pip-
+      - name: "Install tox"
+        run: |
+          python -m pip install --upgrade pip
+          pip install tox
+      - name: "Run tox"
+        env:
+          TOXENV: ${{ matrix.toxenv }}
+        run: |
+          tox
+  lint:
+    name: "Lint"
+    runs-on: "ubuntu-22.04"
+    steps:
+      - name: "Check out repository"
+        uses: "actions/checkout@v3"
+      - name: "Set up Python"
+        uses: "actions/setup-python@v3"
+        with:
+          python-version: "3.10"
+      - name: "Install tox"
+        run: |
+          python -m pip install --upgrade pip
+          pip install tox
+      - name: "Run tox"
+        run: |
+          tox -e linting

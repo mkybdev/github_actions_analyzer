@@ -1,0 +1,23 @@
+name: CI
+on: [push, pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - name: checkout
+      uses: actions/checkout@v3
+
+    - name: bazel cache
+      uses: actions/cache@v3
+      with:
+        path: ~/.cache/bazel
+        key: ${{ runner.os }}-bazel-v2-${{ github.ref_name }}
+        restore-keys: ${{ runner.os }}-bazel-v2-master
+
+    - name: bazel version
+      run: bazel version
+
+    - name: test
+      run: ./scripts/ci.sh

@@ -1,0 +1,86 @@
+name: Deploy
+concurrency:
+  group: deploy
+  cancel-in-progress: true
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - '.cookiecutter/*'
+      - '.github/*'
+      - 'bin/create-db'
+      - 'bin/make_python'
+      - 'bin/make_template'
+      - 'conf/development.ini'
+      - 'conf/supervisord-dev.conf'
+      - 'docs/*'
+      - 'requirements/*'
+      - '!requirements/prod.txt'
+      - 'tests/*'
+      - '**/.gitignore'
+      - '.python-version'
+      - 'LICENSE'
+      - '*.md'
+      - 'docker-compose.yml'
+      - 'tox.ini'
+jobs:
+  docker_hub:
+    name: Docker Hub
+    uses: hypothesis/workflows/.github/workflows/dockerhub.yml@main
+    with:
+      Application: ${{ github.event.repository.name }}
+    secrets: inherit
+  staging:
+    name: Staging
+    needs: [docker_hub]
+    uses: hypothesis/workflows/.github/workflows/deploy.yml@main
+    with:
+      operation: deploy
+      github_environment_name: Staging
+      github_environment_url: https://via.staging.hypothes.is/https://en.wikipedia.org/api/rest_v1/page/pdf/Comet_Kohoutek
+      aws_region: us-west-1
+      elasticbeanstalk_application: via
+      elasticbeanstalk_environment: staging
+      docker_tag: ${{ needs.Docker_Hub.outputs.docker_tag }}
+    secrets: inherit
+  staging_edu:
+    name: Staging (Edu)
+    needs: [docker_hub]
+    uses: hypothesis/workflows/.github/workflows/deploy.yml@main
+    with:
+      operation: deploy
+      github_environment_name: Staging (Edu)
+      github_environment_url: https://hypothesis.instructure.com/courses/125/assignments/878
+      aws_region: us-west-1
+      elasticbeanstalk_application: edu-via
+      elasticbeanstalk_environment: staging
+      docker_tag: ${{ needs.Docker_Hub.outputs.docker_tag }}
+    secrets: inherit
+  production:
+    name: Production
+    needs: [docker_hub, staging]
+    uses: hypothesis/workflows/.github/workflows/deploy.yml@main
+    with:
+      operation: deploy
+      github_environment_name: Production
+      github_environment_url: https://via.hypothes.is/https://en.wikipedia.org/api/rest_v1/page/pdf/Comet_Kohoutek
+      aws_region: us-west-1
+      elasticbeanstalk_application: via
+      elasticbeanstalk_environment: prod
+      docker_tag: ${{ needs.Docker_Hub.outputs.docker_tag }}
+    secrets: inherit
+  production_edu:
+    name: Production (Edu)
+    needs: [docker_hub, staging_edu]
+    uses: hypothesis/workflows/.github/workflows/deploy.yml@main
+    with:
+      operation: deploy
+      github_environment_name: Production (Edu)
+      github_environment_url: https://hypothesis.instructure.com/courses/125/assignments/882
+      aws_region: us-west-1
+      elasticbeanstalk_application: lms-via
+      elasticbeanstalk_environment: prod
+      docker_tag: ${{ needs.Docker_Hub.outputs.docker_tag }}
+    secrets: inherit

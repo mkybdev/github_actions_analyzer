@@ -1,0 +1,114 @@
+name: CS
+
+on: [ pull_request ]
+
+permissions:  # added using https://github.com/step-security/secure-workflows
+  contents: read
+
+jobs:
+  ecs:
+    name: Coding Standards (PHP)
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@128a63446a954579617e875aaab7d2978154e969
+        with:
+          egress-policy: audit # TODO: change to 'egress-policy: block' after couple of runs
+
+      - uses: actions/checkout@8e5e7e5ab8b370d6c329ec480221332ada57f0ab
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@cb8f453143149404c7fd670b5f37c91d395b3054
+        with:
+          php-version: 8.1
+          extensions: intl, gd, opcache, mysql, pdo_mysql
+
+      - name: Get composer cache directory
+        id: composercache
+        run: echo "::set-output name=dir::$(composer config cache-files-dir)"
+
+      - name: Cache dependencies
+        uses: actions/cache@88522ab9f39a2ea568f7027eddc7d8d8bc9d59c8
+        with:
+          path: ${{ steps.composercache.outputs.dir }}
+          key: ${{ runner.os }}-php-74-composer-${{ hashFiles('composer.json composer.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-php-${{ matrix.php }}-composer-
+
+      - name: Install dependencies
+        run: composer install --ansi --no-interaction --no-progress --prefer-dist
+
+      - name: Run EasyCodingStandard
+        run: bin/ecs check
+
+  composer-normalize:
+    name: Composer Normalize
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@128a63446a954579617e875aaab7d2978154e969
+        with:
+          egress-policy: audit # TODO: change to 'egress-policy: block' after couple of runs
+
+      - uses: actions/checkout@8e5e7e5ab8b370d6c329ec480221332ada57f0ab
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@cb8f453143149404c7fd670b5f37c91d395b3054
+        with:
+          php-version: 8.1
+
+      - name: Install dependencies
+        run: composer install --no-scripts
+
+      - name: Ensure lock file is up to date
+        run: composer update --lock --no-scripts
+
+      - name: Run composer normalize
+        run: composer normalize --no-update-lock --diff --dry-run
+
+  lint:
+    permissions:
+      contents: read  # for actions/checkout to fetch code
+      statuses: write  # for github/super-linter/slim to mark status of each linter run
+    name: Lint
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@128a63446a954579617e875aaab7d2978154e969
+        with:
+          egress-policy: audit # TODO: change to 'egress-policy: block' after couple of runs
+
+      - name: Checkout Code
+        uses: actions/checkout@8e5e7e5ab8b370d6c329ec480221332ada57f0ab
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@64ed1c7eab4cce3362f8c340dee64e5eaeef8f7c
+        with:
+          node-version: 14
+
+      - run: yarn install
+
+      - name: Super-Linter
+        uses: github/super-linter/slim@45fc0d88288beee4701c62761281edfee85655d7
+        env:
+          VALIDATE_ALL_CODEBASE: false
+          DEFAULT_BRANCH: 2.1.x
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSS_FILE_NAME: .stylelintrc.json
+          VALIDATE_YAML: true
+          VALIDATE_JSON: true
+          VALIDATE_XML: true
+          VALIDATE_MD: true
+          VALIDATE_GITLEAKS: true
+          VALIDATE_BASH: true
+          VALIDATE_PHP_BUILTIN: true
+          LINTER_RULES_PATH: .
+          VALIDATE_JAVASCRIPT_ES: true
+          VALIDATE_CSS: true

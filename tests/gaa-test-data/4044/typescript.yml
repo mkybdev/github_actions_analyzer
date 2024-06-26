@@ -1,0 +1,70 @@
+name: TypeScript
+
+on:
+  push:
+    branches:
+    - "5.4"
+    - "5.5"
+    - "6.0"
+    - master
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  tsc:
+    name: "TSC"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: "18"
+        cache: "npm"
+    - run: npm install
+    - run: |
+        npx tsc --noEmit
+        npx tsc --project ts/WoltLabSuite/WebComponent --noEmit
+    - name: Check that tslib is in sync.
+      run: diff -wu wcfsetup/install/files/js/3rdParty/tslib.js node_modules/tslib/tslib.js
+  eslint:
+    name: "eslint"
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: "18"
+        cache: "npm"
+    - run: npm install
+    - run: npx eslint .
+  javascript_sync:
+    name: "Check for outdated JavaScript"
+    needs: tsc
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: "18"
+        cache: "npm"
+    - run: npm install
+    - run: rm -r wcfsetup/install/files/js/WoltLabSuite/
+    - run: |
+        npx tsc
+        npx esbuild ts/WoltLabSuite/WebComponent/index.ts --minify --bundle --outfile=wcfsetup/install/files/js/WoltLabSuite/WebComponent.min.js
+    - run: echo "::add-matcher::.github/diff.json"
+    - name: Show diff
+      run: |
+        git checkout -- package-lock.json
+        git diff --exit-code

@@ -1,0 +1,520 @@
+# This is a basic workflow to help you get started with Actions
+
+name: Nightly builds
+
+# Controls when the action will run. Triggers the workflow on push or pull request
+# events but only for the master branch and riscv
+on:
+  workflow_dispatch:
+  schedule: # Run at midnight, every day
+    - cron: '30 0 * * *'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    needs: build-toolchains
+
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: "recursive"
+      
+      - uses: actions/setup-python@v2
+        with:
+          python-version: '3.11.0' # Require the same version of python as Onyx builds, in order to ease the build
+
+      - name: Download the x86_64-onyx-linux toolchain
+        uses: actions/download-artifact@v2.0.8
+        with:
+          # Artifact name
+          name: x86_64-onyx-linux
+
+      - name: Extract Toolchain
+        run: |
+          zstd -d x86_64-onyx-linux.tar.zst --stdout | tar x
+          echo "$PWD/x86_64-onyx/bin" >> $GITHUB_PATH
+  
+      - name: Install dependencies
+        run: |
+          scripts/ci/install_github_ci_deps.sh
+          echo "$PWD/gn_bin" >> $GITHUB_PATH
+
+      # Runs a set of commands using the runners shell
+      - name: Build Onyx
+        run: |
+          cp kernel/configs/kernel.config.x86_64 kernel/kernel.config
+          export SYSROOT=$PWD/sysroot
+          export ONYX_ARCH=x86_64
+          ./scripts/setup_build.sh
+          RUN_CLANG_TIDY=0 make -j $(nproc) iso
+          ./scripts/ci/build_ports.sh
+          ./scripts/create_disk_image.sh disk-image.img --bootable efi
+
+      - name: Upload a Build Artifact(Onyx.iso)
+        uses: actions/upload-artifact@v2.1.4
+        with:
+          name: Onyx ISO
+          path: Onyx.iso
+
+      - name: Upload a Build Artifact(kernel/vmonyx)
+        uses: actions/upload-artifact@v2.1.4
+        with:
+          name: vmonyx
+          path: kernel/vmonyx
+
+      - name: Upload a Build Artifact(Disk image)
+        uses: actions/upload-artifact@v2.1.4
+        with:
+          name: Disk-image.img
+          path: disk-image.img
+  
+  build-llvm:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-22.04
+    needs: build-toolchains
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v2
+        with:
+          submodules: "recursive"
+      
+      - uses: actions/setup-python@v2
+        with:
+          python-version: '3.11.0' # Require the same version of python as Onyx builds, in order to ease the build
+        
+
+      # Runs a single command using the runners shell
+      - name: Download the onyx-llvm-linux toolchain
+        uses: actions/download-artifact@v2.0.8
+        with:
+          # Artifact name
+          name: onyx-llvm-linux
+
+      - name: Extract Toolchain
+        run: |
+          zstd -d onyx-llvm-linux.tar.zst --stdout | tar x
+  
+      - name: Install dependencies
+        run: |
+          scripts/ci/install_github_ci_deps.sh
+          echo "$PWD/gn_bin" >> $GITHUB_PATH
+
+      # Runs a set of commands using the runners shell
+      - name: Build Onyx
+        run: |
+          cp kernel/configs/kernel.config.x86_64 kernel/kernel.config
+          export CLANG_PATH=$PWD/onyx-llvm
+          export SYSROOT=$PWD/sysroot
+          export ONYX_ARCH=x86_64
+          ./scripts/setup_build.sh
+          RUN_CLANG_TIDY=0 make -j $(nproc) iso
+          ./scripts/ci/build_ports.sh llvm
+          ./scripts/create_disk_image.sh disk-image-llvm.img --bootable efi
+
+      - name: Upload a Build Artifact(Onyx.iso)
+        uses: actions/upload-artifact@v2.1.4
+        with:
+          name: Onyx-iso-llvm
+          path: Onyx.iso
+
+      - name: Upload a Build Artifact(kernel/vmonyx)
+        uses: actions/upload-artifact@v2.1.4
+        with:
+          name: vmonyx-llvm
+          path: kernel/vmonyx
+
+      - name: Upload a Build Artifact(disk-image-llvm)
+        uses: actions/upload-artifact@v2.1.4
+        with:
+          name: Disk-image-llvm.img
+          path: disk-image-llvm.img
+  
+  build-riscv:
+    runs-on: ubuntu-22.04
+    needs: build-toolchains
+
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: "recursive"
+      
+      - uses: actions/setup-python@v2
+        with:
+          python-version: '3.11.0' # Require the same version of python as Onyx builds, in order to ease the build
+        
+
+      - name: Download the riscv64-onyx-linux toolchain
+        uses: actions/download-artifact@v2.0.8
+        with:
+          # Artifact name
+          name: riscv64-onyx-linux
+
+      - name: Extract Toolchain
+        run: |
+          zstd -d riscv64-onyx-linux.tar.zst --stdout | tar x
+          echo "$PWD/riscv64-onyx/bin" >> $GITHUB_PATH
+  
+      - name: Install dependencies
+        run: |
+          scripts/ci/install_github_ci_deps.sh
+          echo "$PWD/gn_bin" >> $GITHUB_PATH
+
+      - name: Build Onyx
+        run: |
+          cp kernel/configs/kernel.config.riscv kernel/kernel.config
+          export SYSROOT=$PWD/sysroot
+          export ONYX_ARCH=riscv64
+          ./scripts/setup_build.sh
+          RUN_CLANG_TIDY=0 make -j $(nproc) fullbuild-plus-initrd
+          mkdir -p boot
+          cp kernel/vmonyx boot/
+          cp initrd.tar boot/
+          tar cvf riscv64-onyx-image.tar boot/
+          zstd -T0 -15 riscv64-onyx-image.tar
+
+      - name: Upload the riscv64 boot image
+        uses: actions/upload-artifact@v2.1.4
+        with:
+          name: Onyx boot image (riscv64)
+          path: riscv64-onyx-image.tar.zst
+  
+  build-llvm-riscv64:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-22.04
+    needs: build-toolchains
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v2
+        with:
+          submodules: "recursive"
+
+      - uses: actions/setup-python@v2
+        with:
+          python-version: '3.11.0' # Require the same version of python as Onyx builds, in order to ease the build
+        
+
+      # Runs a single command using the runners shell
+      - name: Download the onyx-llvm-linux toolchain
+        uses: actions/download-artifact@v2.0.8
+        with:
+          # Artifact name
+          name: onyx-llvm-linux
+
+      - name: Extract Toolchain
+        run: |
+          zstd -d onyx-llvm-linux.tar.zst --stdout | tar x
+  
+      - name: Install dependencies
+        run: |
+          scripts/ci/install_github_ci_deps.sh
+          echo "$PWD/gn_bin" >> $GITHUB_PATH
+
+      # Runs a set of commands using the runners shell
+      - name: Build Onyx
+        run: |
+          cp kernel/configs/kernel.config.riscv kernel/kernel.config
+          export CLANG_PATH=$PWD/onyx-llvm
+          export SYSROOT=$PWD/sysroot
+          export ONYX_ARCH=riscv64
+          ./scripts/setup_build.sh
+          make -j $(nproc) fullbuild-plus-initrd
+          mkdir -p boot
+          cp kernel/vmonyx boot/
+          cp initrd.tar boot/
+          tar cvf riscv64-onyx-image-llvm.tar boot/
+          zstd -T0 -15 riscv64-onyx-image-llvm.tar
+
+      - name: Upload the riscv64 boot image (LLVM)
+        uses: actions/upload-artifact@v2.1.4
+        with:
+          name: Onyx boot image (riscv64) (llvm)
+          path: riscv64-onyx-image-llvm.tar.zst
+  # Builds a minimal sysroot, with headers and the libc. Supposed to be used when building a toolchain.
+  # In this case, we limit ourselves to building a stage 1 GNU toolchain since LLVM is far slower to build,
+  # and I'm not sure if it even supports building without a sysroot.
+  build-minimal-sysroots:
+    runs-on: ubuntu-22.04
+
+    strategy:
+      fail-fast: false
+      matrix:
+        target_arch: [x86_64, riscv64, arm64]
+  
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: "recursive"
+
+      - name: Cache (GNU toolchain)
+        id: toolchain-cache-gnu
+        uses: actions/cache@v2.1.4
+        with:
+          # A list of files, directories, and wildcard patterns to cache and restore
+          path: toolchain_binaries-gnu-stage1/
+          # An explicit key for restoring and saving the cache
+          key: ${{ matrix.target_arch }}-toolchain-${{ hashFiles('toolchains/binutils-2.37.patch', 'toolchains/gcc-11.2.0.patch',
+                'toolchains/scripts/build_toolchain.sh') }}
+
+      - name: Setup environment
+        run: |
+          scripts/ci/install_github_ci_deps.sh
+
+          echo "$PWD/gn_bin" >> $GITHUB_PATH
+          echo "$PWD/toolchain_binaries-gnu-stage1/bin" >> $GITHUB_PATH
+
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            echo "$(brew --prefix)/opt/gnu-getopt/bin:$(brew --prefix)/opt/coreutils/libexec/gnubin:$(brew --prefix)/opt/make/libexec/gnubin" >> $GITHUB_PATH
+            export CPATH=$(brew --prefix)/include
+            export LIBRARY_PATH=$(brew --prefix)/lib
+            export CC=gcc-13
+            export CXX=g++-13
+          fi
+
+      - name: Build toolchain
+        if: steps.toolchain-cache-gnu.outputs.cache-hit != 'true'
+        run: |
+          export SYSROOT=$PWD/sysroot
+          export ONYX_ARCH=${{ matrix.target_arch }}
+          mkdir -p toolchain_binaries-gnu-stage1
+          ./toolchains/scripts/build_toolchain.sh --no-libc toolchain_build toolchain_binaries-gnu-stage1 \
+          -a ${{ matrix.target_arch }}
+
+      - name: Build sysroot
+        run: |
+          export ONYX_ARCH=${{ matrix.target_arch }}
+          cp kernel/configs/kernel.config.x86_64 kernel/kernel.config
+          ./scripts/setup_build.sh
+          make install-headers -j $(nproc)
+          ./scripts/build_libc_for_toolchain.sh
+          tar cvf minimal-sysroot-${{ matrix.target_arch }}.tar sysroot/
+          zstd -T0 -15 minimal-sysroot-${{ matrix.target_arch }}.tar
+
+      - name: Upload the minimal sysroot
+        uses: actions/upload-artifact@v2.1.4
+        with:
+          name: minimal-sysroot-${{ matrix.target_arch }}
+          path: minimal-sysroot-${{ matrix.target_arch }}.tar.zst
+
+
+  build-toolchains:
+    runs-on: ${{ matrix.os }}
+    needs: build-minimal-sysroots
+
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, ubuntu-20.04, macos-latest]
+        target_arch: [x86_64, riscv64, arm64]
+        toolchain: [gnu]
+        include:
+          - os: ubuntu-22.04
+            toolchain: llvm
+            target_arch: all
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v2
+        with:
+          submodules: "recursive"
+      
+      - name: Download the minimal sysroot
+        uses: actions/download-artifact@v2.0.8
+
+      - name: Extract minimal sysroot
+        run: |
+          ./scripts/ci/setup_sysroots.sh ${{ matrix.toolchain }} ${{ matrix.target_arch }}
+      
+      - run: |
+          # Add a modifier to ubuntu 20.04 LTS    
+          if [ "${{ matrix.os }}" = "ubuntu-20.04" ]; then
+            os_name_modifier="-ubuntu-20.04"
+          fi
+
+          case "${{ runner.os }}" in
+          Linux)
+            os_name="linux$os_name_modifier"
+            ;;
+          macOS)
+            os_name="macos"
+            ;;
+          esac
+
+          case "${{ matrix.toolchain }}" in
+          gnu)
+            toolchain_id_no_os="${{ matrix.target_arch }}-onyx"
+            ;;
+          llvm)
+            toolchain_id_no_os="onyx-llvm"
+            ;;
+          esac
+
+          echo "os_name=$os_name" >> $GITHUB_ENV
+          echo "toolchain_id_no_os=$toolchain_id_no_os" >> $GITHUB_ENV
+          echo "toolchain_id=${toolchain_id_no_os}-${os_name}" >> $GITHUB_ENV
+          echo "cache-version=\"-v2\"" >> $GITHUB_ENV  # Used to invalidate previous caches, when needed.
+
+
+      - name: Cache (GNU toolchain)
+        if: matrix.toolchain == 'gnu'
+        id: toolchain-cache-gnu
+        uses: actions/cache@v2.1.4
+        with:
+          # A list of files, directories, and wildcard patterns to cache and restore
+          path: toolchain_binaries-gnu/
+          # An explicit key for restoring and saving the cache
+          key: ${{ matrix.target_arch }}-toolchain-${{ matrix.os }}${{ env.cache-version }}-${{ hashFiles('toolchains/binutils-2.37.patch',
+                'toolchains/gcc-11.2.0.patch', 'toolchains/scripts/build_toolchain.sh') }}-nightly
+      
+      - name: Cache (LLVM toolchain)
+        if: matrix.toolchain == 'llvm'
+        id: toolchain-cache-llvm
+        uses: actions/cache@v2.1.4
+        with:
+          # A list of files, directories, and wildcard patterns to cache and restore
+          path: toolchain_binaries-llvm/
+          # An explicit key for restoring and saving the cache
+          key: ${{ matrix.target_arch }}-toolchain-${{ matrix.os }}${{ env.cache-version }}-${{ hashFiles('toolchains/llvm-project-13.0.0.patch',
+                'toolchains/scripts/build_toolchain.sh') }}-nightly
+  
+      - name: Build toolchain
+        if: (steps.toolchain-cache-gnu.outputs.cache-hit != 'true' && matrix.toolchain == 'gnu') ||
+            (steps.toolchain-cache-llvm.outputs.cache-hit != 'true' && matrix.toolchain == 'llvm')
+        run: |
+          scripts/ci/install_github_ci_deps.sh
+          cp kernel/configs/kernel.config.x86_64 kernel/kernel.config
+          export PATH="$PATH:$PWD/gn_bin"
+          echo "$PWD/gn_bin" >> $GITHUB_PATH
+
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            export PATH="$(brew --prefix)/opt/gnu-getopt/bin:$(brew --prefix)/opt/coreutils/libexec/gnubin:$(brew --prefix)/opt/make/libexec/gnubin:$PATH"
+            export CPATH=$(brew --prefix)/include
+            export LIBRARY_PATH=$(brew --prefix)/lib
+            export CC=gcc-13
+            export CXX=g++-13
+          fi
+
+          export SYSROOT=$PWD/sysroot
+          export ONYX_ARCH=${{ matrix.target_arch }}
+          ./scripts/setup_build.sh
+          mkdir -p toolchain_binaries-${{ matrix.toolchain }}
+          if ! ./toolchains/scripts/build_toolchain.sh --use-lto toolchain_build toolchain_binaries-${{ matrix.toolchain }} \
+            -a ${{ matrix.target_arch }} --toolchain=${{ matrix.toolchain }}; then
+            rm -rf toolchain_binaries-${{ matrix.toolchain }}
+            exit 1
+          fi
+
+      - name: Compress toolchain
+        run: |
+          mv toolchain_binaries-${{ matrix.toolchain }} ${{ env.toolchain_id_no_os }}
+          tar cvf ${{ env.toolchain_id }}.tar ${{ env.toolchain_id_no_os }}
+          zstd -T0 -13 ${{ env.toolchain_id }}.tar -o ${{ env.toolchain_id }}.tar.zst
+          # We move the binaries back to toolchain_binaries-${{ matrix.toolchain }} due to the cache we previously set up
+          mv ${{ env.toolchain_id_no_os }} toolchain_binaries-${{ matrix.toolchain }}
+
+      - name: Upload the toolchain
+        uses: actions/upload-artifact@v2.1.4
+        with:
+          name: ${{ env.toolchain_id }}
+          path: ${{ env.toolchain_id }}.tar.zst
+  build-arm64:
+    runs-on: ubuntu-22.04
+    needs: build-toolchains
+
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: "recursive"
+      
+      - uses: actions/setup-python@v2
+        with:
+          python-version: '3.11.0' # Require the same version of python as Onyx builds, in order to ease the build
+        
+
+      - name: Download the arm64-onyx-linux toolchain
+        uses: actions/download-artifact@v2.0.8
+        with:
+          # Artifact name
+          name: arm64-onyx-linux
+
+      - name: Extract Toolchain
+        run: |
+          zstd -d arm64-onyx-linux.tar.zst --stdout | tar x
+          echo "$PWD/arm64-onyx/bin" >> $GITHUB_PATH
+  
+      - name: Install dependencies
+        run: |
+          scripts/ci/install_github_ci_deps.sh
+          echo "$PWD/gn_bin" >> $GITHUB_PATH
+
+      - name: Build Onyx
+        run: |
+          cp kernel/configs/kernel.config.arm64 kernel/kernel.config
+          export SYSROOT=$PWD/sysroot
+          export ONYX_ARCH=arm64
+          ./scripts/setup_build.sh
+          RUN_CLANG_TIDY=0 make -j $(nproc) fullbuild-plus-initrd
+          mkdir -p boot
+          cp kernel/vmonyx boot/
+          cp initrd.tar boot/
+          tar cvf arm64-onyx-image.tar boot/
+          zstd -T0 -15 arm64-onyx-image.tar
+
+      - name: Upload the arm64 boot image
+        uses: actions/upload-artifact@v2.1.4
+        with:
+          name: Onyx boot image (arm64)
+          path: arm64-onyx-image.tar.zst
+  
+  build-llvm-arm64:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-22.04
+    needs: build-toolchains
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v2
+        with:
+          submodules: "recursive"
+
+      - uses: actions/setup-python@v2
+        with:
+          python-version: '3.11.0' # Require the same version of python as Onyx builds, in order to ease the build
+        
+
+      # Runs a single command using the runners shell
+      - name: Download the onyx-llvm-linux toolchain
+        uses: actions/download-artifact@v2.0.8
+        with:
+          # Artifact name
+          name: onyx-llvm-linux
+
+      - name: Extract Toolchain
+        run: |
+          zstd -d onyx-llvm-linux.tar.zst --stdout | tar x
+  
+      - name: Install dependencies
+        run: |
+          scripts/ci/install_github_ci_deps.sh
+          echo "$PWD/gn_bin" >> $GITHUB_PATH
+
+      # Runs a set of commands using the runners shell
+      - name: Build Onyx
+        run: |
+          cp kernel/configs/kernel.config.arm64 kernel/kernel.config
+          export CLANG_PATH=$PWD/onyx-llvm
+          export SYSROOT=$PWD/sysroot
+          export ONYX_ARCH=arm64
+          ./scripts/setup_build.sh
+          make -j $(nproc) fullbuild-plus-initrd
+          mkdir -p boot
+          cp kernel/vmonyx boot/
+          cp initrd.tar boot/
+          tar cvf arm64-onyx-image-llvm.tar boot/
+          zstd -T0 -15 arm64-onyx-image-llvm.tar
+
+      - name: Upload the arm64 boot image (LLVM)
+        uses: actions/upload-artifact@v2.1.4
+        with:
+          name: Onyx boot image (arm64) (llvm)
+          path: arm64-onyx-image-llvm.tar.zst

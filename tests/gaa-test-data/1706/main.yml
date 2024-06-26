@@ -1,0 +1,11 @@
+name: CI
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Run Unit Tests
+        run: docker run --name iliasdev -v "${PWD}:/var/www/html/ilias/Customizing/global/plugins/Services/Repository/RepositoryObject/Opencast" ghcr.io/legion2/ilias-test-docker:latest "cd Customizing/global/plugins/Services/Repository/RepositoryObject/Opencast/; composer install; install-plugin.sh xmh robj Repository Services Opencast; ./test/test.sh"

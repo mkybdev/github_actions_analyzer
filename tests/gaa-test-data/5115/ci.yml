@@ -1,0 +1,96 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - 5.x
+  pull_request:
+    branches:
+      - '*'
+  schedule:
+    - cron: "0 0 * * *"
+
+jobs:
+  tests:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        php-version: ['8.1', '8.2']
+        cakephp-version: ['latest']
+
+    env:
+      coverage: ${{ matrix.php-version == '8.2' && matrix.cakephp-version == 'latest' }}
+
+    name: |
+      ${{
+        format(
+          '{0}PHP {1} - CakePHP {2}',
+          fromJSON('["", "Coverage - "]')[matrix.php-version == '8.2' && matrix.cakephp-version == 'latest'],
+          matrix.php-version,
+          matrix.cakephp-version
+        )
+      }}
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php-version }}
+          extensions: mbstring, intl
+          coverage: pcov
+
+      - name: Composer install
+        run: |
+          if [[ ${{ matrix.cakephp-version }} != 'latest' ]]; then
+            composer require --no-update cakephp/cakephp:~${{ matrix.cakephp-version }}
+          fi
+          composer install --optimize-autoloader
+
+      - name: Setup problem matchers for PHPUnit
+        if: matrix.php-version != '8.2' && matrix.cakephp-version != 'latest'
+        run: echo "::add-matcher::${{ runner.tool_cache }}/phpunit.json"
+
+      - name: Run PHPUnit
+        run: |
+          if [[ ${{ matrix.php-version }} == '8.2' && ${{ matrix.cakephp-version }} == 'latest' ]]; then
+            composer test-coverage
+          else
+            composer test
+          fi
+
+      - name: Code Coverage Report
+        if: success() && matrix.php-version == '8.2' && matrix.cakephp-version == 'latest'
+        uses: codecov/codecov-action@v3
+
+  cs-stan:
+    name: Coding Standards & Static Analysis
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.1'
+          extensions: mbstring, intl
+          coverage: none
+          tools: cs2pr
+
+      - name: Composer Install
+        run: composer stan-setup
+
+      - name: Run phpcs
+        run: composer cs-check -- --parallel=1 --report=checkstyle | cs2pr
+
+      - name: Run psalm
+        run: composer psalm -- --output-format=github
+
+      - name: Run phpstan (src)
+        run: composer phpstan-src -- --error-format=github
+
+      - name: Run phpstan (tests)
+        run: composer phpstan-tests -- --error-format=github

@@ -1,0 +1,17 @@
+name: Deploy
+on:
+  release:
+    types: [published]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v1
+    - run: |
+        sudo apt install python3-setuptools
+        sudo pip3 install conan
+        conan remote add pureoop-2out https://conan.cloudsmith.io/pureoop/2out
+        conan remote add pureoop-goost https://conan.cloudsmith.io/pureoop/goost
+        conan create . dronmdf/stable --build=missing
+        conan user -p ${{ secrets.CLOUDSMITH }} -r pureoop-hoost andrey-valyaev
+        conan upload "goost/*" -r pureoop --all --confirm

@@ -1,0 +1,28 @@
+name: status
+
+on:
+  push:
+    paths-ignore:
+    - 'docs/**'
+
+jobs:
+
+  lint-test:
+
+    runs-on: ubuntu-latest
+
+    container:
+      image: analysiscenter1/ds-py3
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Update pylint
+      run: pip3 install pylint
+
+    - name: Check pylint
+      run: pylint -rn --rcfile pylintrc batchflow
+
+    - name: Run tests
+      if: always()
+      run: pytest -m "not slow" --disable-pytest-warnings -v

@@ -1,0 +1,22 @@
+name: go
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main ]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+    - name: Setup Go
+      uses: actions/setup-go@v2
+      with:
+        go-version: 1.16
+    - name: Build
+      run: go build -v ./...
+    - name: Check format
+      run: gofmt -s -l . | awk '{print$0}END{if(NR>0)exit 1}'
+    - name: Test
+      run: go test -v -cover ./...

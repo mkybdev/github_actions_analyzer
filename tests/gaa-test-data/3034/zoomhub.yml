@@ -1,0 +1,293 @@
+name: zoomhub
+
+on: push
+
+jobs:
+  # process-content
+  process-content-build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v2
+      - name: Cache process-content Node.js dependencies
+        uses: actions/cache@v2
+        env:
+          cache-name: process-content-node-dependencies
+        with:
+          path: process-content/.npm
+          key: process-content-build-v2-${{ runner.os }}-${{ env.cache-name }}-${{ hashFiles('process-content/package-lock.json') }}
+          restore-keys: |
+            process-content-build-v2-${{ runner.os }}-${{ env.cache-name }}-
+            process-content-build-v2-${{ runner.os }}-
+
+      - name: Install Node.js dependencies
+        run: cd process-content && npm ci --cache .npm --prefer-offline
+
+      - name: Create workspace directory
+        run: mkdir workspace
+
+      - name: Create AWS Lambda package
+        run: cd process-content && zip -r function-processContent.zip index.js lib node_modules
+
+      - name: Move AWS Lambda package to workspace
+        run: mv process-content/function-processContent.zip workspace
+
+      - name: Copy AWS ops files to workspace
+        run: cp ops/aws/deploy-processContent.sh workspace
+
+      - name: "WORKAROUND: Create tar archive (preserves file permissions on GitHub Actions)"
+        # See: https://github.com/actions/upload-artifact/tree/11e311c8b504ea40cbed20583a64d75b4735cff3#permission-loss
+        run: tar --create --verbose --gzip --file process-content-workspace.tar.gz workspace
+
+      - name: Upload workspace
+        uses: actions/upload-artifact@v2
+        with:
+          name: process-content-workspace
+          path: process-content-workspace.tar.gz
+
+  process-content-deploy:
+    runs-on: ubuntu-22.04
+    needs: [process-content-build]
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      # See: https://github.com/aws/aws-cli/issues/735#issuecomment-39395188
+      AWS_DEFAULT_REGION: "us-east-2"
+      ZH_API_PASSWORD_DEVELOPMENT: ${{ secrets.ZH_API_PASSWORD_DEVELOPMENT }}
+      ZH_API_USERNAME_DEVELOPMENT: ${{ secrets.ZH_API_USERNAME_DEVELOPMENT }}
+      ZH_API_PASSWORD_STAGING: ${{ secrets.ZH_API_PASSWORD_STAGING }}
+      ZH_API_USERNAME_STAGING: ${{ secrets.ZH_API_USERNAME_STAGING }}
+      ZH_API_PASSWORD_PRODUCTION: ${{ secrets.ZH_API_PASSWORD_PRODUCTION }}
+      ZH_API_USERNAME_PRODUCTION: ${{ secrets.ZH_API_USERNAME_PRODUCTION }}
+    steps:
+      - name: Download process-content-workspace
+        uses: actions/download-artifact@v2
+        with:
+          name: process-content-workspace
+
+      - name: "WORKAROUND: Extract tar archive (preserves file permissions on GitHub Actions)"
+        # See: https://github.com/actions/upload-artifact/tree/11e311c8b504ea40cbed20583a64d75b4735cff3#permission-loss
+        run: |
+          tar --extract --verbose --gzip --file process-content-workspace.tar.gz --strip-components=1
+
+      - name: "development + staging: Deploy 'processContent' to AWS Lambda"
+        shell: bash
+        run: |
+          ZH_ENV=development ./deploy-processContent.sh
+          ZH_ENV=staging ./deploy-processContent.sh
+        if: github.ref != 'refs/heads/main'
+
+      - name: "production: Deploy 'processContent' to AWS Lambda"
+        shell: bash
+        run: |
+          ZH_ENV=production ./deploy-processContent.sh
+        if: github.ref == 'refs/heads/main'
+
+  # web
+  web-build:
+    runs-on: ubuntu-22.04
+    env:
+      PGHOST: "localhost"
+      PGPORT: "5432"
+      PGUSER: "zoomhub"
+      PGDATABASE: "zoomhub_test"
+      PGPASSWORD: "popcorn"
+
+    services:
+      postgres:
+        image: postgres:9.6.5
+        env:
+          POSTGRES_USER: zoomhub
+          POSTGRES_DB: zoomhub_test
+          POSTGRES_PASSWORD: popcorn
+        # Set health checks to wait until PostgreSQL has started
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          # Maps TCP port 5432 on service container to the host
+          - 5432:5432
+
+    steps:
+      - uses: actions/checkout@v2
+      - uses: haskell/actions/setup@v1
+        with:
+          ghc-version: "8.6.5"
+          cabal-version: "latest"
+          enable-stack: true
+          stack-version: "latest"
+
+      - name: Set production base URI for website and API
+        run: |
+          echo "ZH_API_BASE_URI=https://api.zoomhub.net" >> $GITHUB_ENV
+          echo "ZH_WEB_BASE_URI=https://zoomhub.net" >> $GITHUB_ENV
+          echo "ZH_STATIC_BASE_URI=https://static.zoomhub.net" >> $GITHUB_ENV
+        if: github.ref == 'refs/heads/main'
+
+      - name: Set staging base URI for website and API
+        run: |
+          echo "ZH_API_BASE_URI=https://api.staging.zoomhub.net" >> $GITHUB_ENV
+          echo "ZH_WEB_BASE_URI=https://staging.zoomhub.net" >> $GITHUB_ENV
+          echo "ZH_STATIC_BASE_URI=https://static.zoomhub.net" >> $GITHUB_ENV
+        if: github.ref != 'refs/heads/main'
+
+      - name: Cache ~/.stack
+        uses: actions/cache@v2
+        env:
+          cache-name: cache-stack
+        with:
+          path: ~/.stack
+          key: web-build-v1-${{ runner.os }}-${{ env.cache-name }}-${{ hashFiles('**/*.cabal') }}-${{ hashFiles('**/stack.yaml') }}-${{ hashFiles('**/stack.yaml.lock') }}-${{ hashFiles('**/package.yaml') }}
+          restore-keys: |
+            web-build-v1-${{ runner.os }}-${{ env.cache-name }}-
+            web-build-v1-${{ runner.os }}-
+
+      - name: Cache .stack-work
+        uses: actions/cache@v2
+        env:
+          cache-name: cache-stack-work
+        with:
+          path: .stack-work
+          key: web-build-v1-${{ runner.os }}-${{ env.cache-name }}-${{ hashFiles('**/*.cabal') }}-${{ hashFiles('**/stack.yaml') }}-${{ hashFiles('**/stack.yaml.lock') }}-${{ hashFiles('**/package.yaml') }}
+          restore-keys: |
+            web-build-v1-${{ runner.os }}-${{ env.cache-name }}-
+            web-build-v1-${{ runner.os }}-
+
+      - name: Cache node_modules
+        uses: actions/cache@v2
+        env:
+          cache-name: cache-node_modules
+        with:
+          path: node_modules
+          key: web-build-v1-${{ runner.os }}-${{ env.cache-name }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            web-build-v1-${{ runner.os }}-${{ env.cache-name }}-
+            web-build-v1-${{ runner.os }}-
+
+      - name: Cache binaries
+        id: cache-stack-binaries
+        uses: actions/cache@v2
+        env:
+          cache-name: cache-stack-binaries-v4
+        with:
+          path: |
+            bin/zoomhub
+            bin/migrate-database
+          key: web-build-v1-${{ runner.os }}-${{ env.cache-name }}-${{ hashFiles('**/*.cabal') }}-${{ hashFiles('**/stack.yaml') }}-${{ hashFiles('**/stack.yaml.lock') }}-${{ hashFiles('**/package.yaml') }}-${{ hashFiles('data/*') }}-${{ hashFiles('**/*.hs') }}
+          restore-keys: |
+            web-build-v1-${{ runner.os }}-${{ env.cache-name }}-${{ hashFiles('**/*.cabal') }}-${{ hashFiles('**/stack.yaml') }}-${{ hashFiles('**/stack.yaml.lock') }}-${{ hashFiles('**/package.yaml') }}-${{ hashFiles('data/*') }}-${{ hashFiles('**/*.hs') }}
+
+      - name: Build frontend
+        run: |
+          npm ci
+          SNOWPACK_PUBLIC_API_BASE_URI="$ZH_API_BASE_URI" \
+          SNOWPACK_PUBLIC_WEB_BASE_URI="$ZH_WEB_BASE_URI" \
+          SNOWPACK_PUBLIC_STATIC_BASE_URI="$ZH_STATIC_BASE_URI" \
+            npx snowpack build
+
+          # NOTE: Delete Haskell source code. This directory is only mounted in
+          # Snowpack configuration to enable Tailwind CSS ’purge’ feature. These
+          # files are not meant to be shipped to the public website.
+          rm -rf frontend/build/__DELETE_ME__
+
+      - name: Build backend
+        if: steps.cache-stack-binaries.outputs.cache-hit != 'true'
+        run: |
+          mkdir bin
+          stack build \
+            --copy-bins \
+            --test \
+            --no-run-tests \
+            --no-terminal \
+            --jobs 4 \
+            --pedantic \
+            --ghc-options='-O2' \
+            --local-bin-path bin
+
+      - name: Run backend tests
+        if: steps.cache-stack-binaries.outputs.cache-hit != 'true'
+        run: |
+          HASHIDS_SALT='secret-salt' ./bin/migrate-database $PGDATABASE migrate
+
+          psql $PGDATABASE < data/zoomhub_data.sql
+          psql $PGDATABASE < data/zoomhub_sequences.sql
+
+          stack build \
+            --test \
+            --no-terminal \
+            --pedantic \
+            --ghc-options='-O2'
+
+      - name: Create workspace directory
+        run: mkdir workspace
+
+      - name: Copy AWS ops files to workspace
+        run: |
+          cp --recursive --preserve \
+            ops/aws/.ebextensions \
+            ops/aws/.platform \
+            ops/aws/build-web.sh \
+            ops/aws/deploy-web.sh \
+            ops/aws/Dockerfile.deploy \
+            ops/aws/Dockerrun.aws.json.template \
+            ops/aws/run.sh \
+            workspace
+
+      - name: Copy public files to workspace
+        run: cp --recursive frontend/build workspace/public
+
+      - name: Copy binaries workspace
+        run: cp bin/* workspace
+
+      - name: "WORKAROUND: Create tar archive (preserves file permissions on GitHub Actions)"
+        # See: https://github.com/actions/upload-artifact/tree/11e311c8b504ea40cbed20583a64d75b4735cff3#permission-loss
+        run: tar --create --verbose --gzip --file web-workspace.tar.gz workspace
+
+      - name: Upload workspace
+        uses: actions/upload-artifact@v2
+        with:
+          name: web-workspace
+          path: web-workspace.tar.gz
+
+  web-deploy:
+    runs-on: ubuntu-22.04
+    needs: [web-build]
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      ZH_AWS_ACCOUNT_ID: ${{ secrets.ZH_AWS_ACCOUNT_ID }}
+      ZH_AWS_EB_PROJECT: ${{ secrets.ZH_AWS_EB_PROJECT }}
+      ZH_AWS_ECR_REPO: ${{ secrets.ZH_AWS_ECR_REPO }}
+    steps:
+      - name: Sets ZH_AWS_EB_ENVIRONMENT for production
+        run: |
+          echo "ZH_AWS_EB_ENVIRONMENT=production-3" >> $GITHUB_ENV
+        if: github.ref == 'refs/heads/main'
+
+      - name: Sets ZH_AWS_EB_ENVIRONMENT for staging
+        run: |
+          echo "ZH_AWS_EB_ENVIRONMENT=staging-2" >> $GITHUB_ENV
+        if: github.ref != 'refs/heads/main'
+
+      - name: Download web-workspace
+        uses: actions/download-artifact@v2
+        with:
+          name: web-workspace
+
+      - name: "WORKAROUND: Extract tar archive (preserves file permissions on GitHub Actions)"
+        # See: https://github.com/actions/upload-artifact/tree/11e311c8b504ea40cbed20583a64d75b4735cff3#permission-loss
+        run: |
+          tar --extract --verbose --gzip --file web-workspace.tar.gz --strip-components=1
+
+      - name: Create version
+        shell: bash
+        run: echo $GITHUB_SHA > version.txt
+
+      - name: Build Docker image
+        shell: bash
+        run: ./build-web.sh $GITHUB_SHA
+
+      - name: Deploy 'web' Docker image to AWS Elastic Beanstalk
+        shell: bash
+        run: ./deploy-web.sh $GITHUB_SHA

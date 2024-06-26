@@ -1,0 +1,32 @@
+name: build
+
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+jobs:
+  build:
+
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup nuget
+      uses: nuget/setup-nuget@v1
+    
+    - name: Restore packages
+      run: nuget restore wtrace.sln
+    
+    - name: Setup MSBuild.exe
+      uses: microsoft/setup-msbuild@v1.1
+    
+    - name: Build Release using MSBuild
+      run: msbuild wtrace.sln -m /p:Configuration=Release
+     
+    - uses: actions/upload-artifact@v4
+      with:
+        name: wtrace
+        path: bin\wtrace\net48\wtrace.exe

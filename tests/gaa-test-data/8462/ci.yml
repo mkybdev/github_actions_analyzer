@@ -1,0 +1,74 @@
+---
+name: CI
+on:
+  push:
+    branches: master
+  pull_request:
+
+jobs:
+  yamllint:
+    name: lint yaml
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Setup Python
+        uses: actions/setup-python@v1
+      - name: Install yamllint
+        run: pip install --user yamllint
+      - name: Run yamllint
+        run: ~/.local/bin/yamllint -c .yamllint.yml .
+  checkproto:
+    name: check proto
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Run check-proto
+        run: make check-proto
+  checkgomod:
+    name: check go.mod
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-go@v1
+        with:
+          go-version: 1.13
+      - run: go mod tidy -v
+      - name: Check for changes in go.mod
+        run: |
+          git diff --name-only --exit-code go.mod || ( git diff && echo "Run go tidy to update go.mod" && false )
+  build:
+    name: build go
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: actions/setup-go@v1
+        with:
+          go-version: 1.13
+      - run: |
+          go build -v ./...
+
+#  shellcheck:
+#    name: shellcheck
+#    runs-on: ubuntu-latest
+#    steps:
+#      - uses: actions/checkout@v2
+#      - name: shellcheck
+#        uses: reviewdog/action-shellcheck@v1
+#        with:
+#          github_token: ${{ secrets.github_token }}
+#          reporter: github-check
+#  test:
+#    name: test
+#    runs-on: ubuntu-latest
+#    steps:
+#      - uses: actions/checkout@v2
+#      - uses: actions/setup-go@v1
+#        with:
+#          go-version: 1.13
+#      - name: Install gotestsum
+#        run: go get gotest.tools/gotestsum@v0.4.0
+#      - name: Run tests
+#        run: |
+#         eval $(go env)
+#         mkdir -p ~/junit/
+#         ${GOPATH}/bin/gotestsum --junitfile ~/junit/unit-tests.xml -- -short $(go list ./...)

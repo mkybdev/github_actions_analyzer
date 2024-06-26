@@ -1,0 +1,46 @@
+name: windows
+
+on: [push, pull_request]
+
+jobs:
+    build:
+        strategy:
+            matrix:
+                os: [windows-2022]
+                platform: [x64]
+                build_type: [Debug, Release]
+            fail-fast: false
+
+        runs-on: ${{matrix.os}}
+
+        steps:
+        - uses: actions/checkout@v2
+          with:
+            submodules: recursive
+
+        - uses: actions/setup-dotnet@v3
+          with:
+            dotnet-version: '7.0.x'
+
+        - name: Debug
+          run: |
+                cmake --help
+
+        - name: Install cpp dependencies
+          run: |
+                dotnet run --project .\tools\buildtools\Workbench\ -- build install --compiler ${{matrix.os}} --platform ${{matrix.platform}}
+
+        - name: Configure
+          working-directory: ${{github.workspace}}
+          run: |
+                dotnet run --project .\tools\buildtools\Workbench\ -- build cmake --compiler ${{matrix.os}} --platform ${{matrix.platform}}
+
+        - name: Build
+          shell: bash
+          working-directory: ${{github.workspace}}/build/euphoria
+          run: cmake --build . --config ${{matrix.build_type}}
+
+        - name: Test
+          shell: bash
+          working-directory: ${{github.workspace}}/build
+          run: ctest -C ${{matrix.build_type}}

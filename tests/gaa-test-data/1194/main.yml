@@ -1,0 +1,66 @@
+name: Common Test
+
+on:
+  pull_request:
+    branches:
+      - 'master'
+  push:
+    branches:
+      - 'master'
+
+jobs:
+  linux:
+    name: Test on OTP ${{ matrix.otp_version }} and ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        otp_version: [20, 21, 22, 23, 24]
+        os: [ubuntu-latest]
+
+    container:
+      image: erlang:${{ matrix.otp_version }}
+
+    env:
+      LATEST_OTP_RELEASE: 24
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Compile
+      run: ./bootstrap
+    - name: CT tests
+      run: ./rebar3 ct
+    - shell: bash
+      name: Dialyzer
+      run: |
+        [[ "${{ matrix.otp_version }}" != "${{ env.LATEST_OTP_RELEASE }}" ]] || (./rebar3 clean -a && ./rebar3 as dialyzer dialyzer)
+
+  macos:
+    name: Test on MacOS
+    runs-on: macos-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Brew Version Check
+      run: brew --version
+    - name: Keep Brew Fresh
+      run: brew update
+    - name: Install Erlang
+      run: brew install erlang
+    - name: Compile
+      run: ./bootstrap
+    - name: CT tests
+      run: ./rebar3 ct
+
+  windows:
+    name: Test on Windows
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: Install Erlang
+      run: choco install erlang
+    - name: Compile
+      run: .\bootstrap.ps1
+    - name: CT tests
+      run: .\rebar3.ps1 ct

@@ -1,0 +1,40 @@
+name: Java CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  build:
+    
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+    - name: Set up JDK 11
+      uses: actions/setup-java@v3
+      with:
+        distribution: 'temurin'
+        java-version: 11
+
+    - name: Install attr package
+      run: sudo apt-get install -y attr
+
+    - name: build and test cadc-util-fs
+      run: cd cadc-util-fs && ../gradlew --info clean build javadoc install
+      
+    - name: build and test cadc-vos
+      run: cd cadc-vos && ../gradlew --info clean build javadoc checkstyleMain install
+      
+    - name: build and test cadc-vos-client
+      run: cd cadc-vos-client && ../gradlew --info clean build javadoc checkstyleMain install
+      
+    - name: build and test cadc-vos-server
+      run: cd cadc-vos-server && ../gradlew --info clean build javadoc install
+     
+    - name: build and test cadc-test-vos
+      run: cd cadc-test-vos && ../gradlew --info clean build javadoc install
+     
+    - name: build and test cavern
+      run: cd cavern && ../gradlew --info clean build
+      

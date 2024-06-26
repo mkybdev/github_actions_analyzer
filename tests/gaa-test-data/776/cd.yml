@@ -1,0 +1,28 @@
+name: CD
+
+on:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: write
+
+jobs:
+  test_and_build:
+    uses: ./.github/workflows/test-and-build.yml
+
+  deploy:
+    name: 🚀 Deploy
+    needs: [test_and_build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: artifact
+          path: dist
+      - uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          folder: dist
+          clean: true

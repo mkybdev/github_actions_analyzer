@@ -1,0 +1,17 @@
+name: Build
+
+on: [push]
+
+jobs:
+  build:
+
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    - name: prepare
+      run: sudo apt install -y pkg-config libcurl4-openssl-dev libjson-c-dev cmake binutils make
+    - name: cmake 
+      run: mkdir -p build && cd build && cmake ..
+    - name: make
+      run: cd build && make

@@ -1,0 +1,24 @@
+name: Publish
+on:
+  push:
+    tags:
+      - '*'
+
+jobs:
+  publish_release:
+    runs-on: macOS-14
+    steps:
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+      - uses: actions/checkout@v2
+      - name: Prepare
+        run: |
+          bundle update --bundler
+          bundle install
+      - name: Publish release
+        env:
+          SLACK_URL: ${{ secrets.SLACK_URL }}
+          COCOAPODS_TRUNK_TOKEN: ${{ secrets.COCOAPODS_TRUNK_TOKEN }}
+          GITHUB_API_TOKEN: ${{ secrets.GH_UIAS_TOKEN }}
+        run: bundle exec fastlane deploy

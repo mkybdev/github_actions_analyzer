@@ -1,0 +1,143 @@
+---
+name: AnsibleCI
+
+on:
+  push:
+  pull_request:
+  # schedule:  # run weekly, every Tuesday 04:00
+  #   - cron: '0 4 * * 2'
+
+defaults:
+  run:
+    shell: wsl-bash {0}
+
+jobs:
+  build:
+
+    runs-on: windows-2019
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+    env:
+      ANSIBLE_CALLBACKS_ENABLED: profile_tasks
+      winrm_user: winrm_test_user
+      winrm_password: WinRM_test_Pass@w0rd1
+      user_cert: c:\ansible-harden-windows\user.pem
+      user_key: c:\ansible-harden-windows\key.pem
+      user_pfx: c:\ansible-harden-windows\user.pfx
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: juju4.harden_windows
+      - name: Setup Winrm
+        run: |
+          $ErrorActionPreference = 'SilentlyContinue'
+          net user /Y /add $env:winrm_user $env:winrm_password
+          net localgroup administrators $env:winrm_user /add
+          winrm set winrm/config/client/auth '@{Basic="true"}'
+          winrm set winrm/config/service/auth '@{Basic="true"}'
+          winrm set winrm/config/service/auth '@{Certificate="true"}'
+          winrm set winrm/config/service/auth '@{CbtHardeningLevel="Strict"}'
+          winrm set winrm/config/service '@{AllowUnencrypted="true"}'
+          New-WinrmUserCertificateMapping $env:user_cert_thumb
+          Write-Host $env:PATH
+          ($pwd).path
+          echo "localhost ansible_user=$env:winrm_user ansible_password=$env:winrm_password ansible_connection=winrm ansible_winrm_server_cert_validation=ignore" | Out-File -FilePath juju4.harden_windows\inventory
+          Get-ChildItem -Path c:\
+        shell: pwsh
+      - name: Check winrm config
+        run: |
+          dir WSMan:\localhost\Client
+          dir WSMan:\localhost\Service
+          winrm enumerate winrm/config/listener
+          winrm get http://schemas.microsoft.com/wbem/wsman/1/config
+          Get-ChildItem wsman:\localhost\Listener
+        shell: pwsh
+      # Caution: The LocalAccountTokenFilterPolicy entry disables user account control (UAC) remote restrictions for all users of all affected computers. Consider the implications of this setting carefully before changing the policy”
+      # http://www.harmj0y.net/blog/redteaming/pass-the-hash-is-dead-long-live-localaccounttokenfilterpolicy/
+      - name: Check LocalAccountTokenFilterPolicy
+        run: |
+          Get-ChildItem -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Policies\System"
+        shell: pwsh
+      - name: Test winrm
+        run: |
+          Test-WSMan
+          winrm identify -r:http://localhost:5985 -auth:basic -u:$env:winrm_user -p:$env:winrm_password -encoding:utf-8
+          winrm identify -r:https://localhost:5986 -auth:basic -u:$env:winrm_user -p:$env:winrm_password -encoding:utf-8
+        shell: pwsh
+        continue-on-error: true
+      - uses: Vampire/setup-wsl@v2
+        with:
+          distribution: Ubuntu-20.04
+          additional-packages:
+            python3
+            python3-pip
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+      - name: Install dependencies
+        run: |
+          python3 --version
+          python3 -c "import ssl; print(ssl.OPENSSL_VERSION)"
+          python3 -c 'import ssl; ssl.PROTOCOL_TLSv1_2'
+          python3 -m pip install --upgrade pip
+          pip3 install pywinrm
+          pip3 install ansible-lint flake8 yamllint ansible
+          ansible --version
+          cat juju4.harden_windows/inventory
+      - name: Environment
+        run: |
+          uname -a
+          pwd
+          env
+          find . -ls
+          ls /
+          ls /mnt
+      - name: Install play dependencies
+        run: |
+          mkdir -p /etc/ansible/roles
+          cp -R /mnt/d/a/ansible-harden-windows/ansible-harden-windows/juju4.harden_windows /etc/ansible/roles/juju4.harden_windows
+          cd juju4.harden_windows
+          # [ -f get-dependencies.sh ] && sh -x get-dependencies.sh
+          { echo '[defaults]'; echo 'callbacks_enabled = profile_tasks, timer'; echo 'roles_path = ../'; echo 'ansible_python_interpreter: /usr/bin/python3'; } >> ansible.cfg
+          cat ansible.cfg
+      - name: Ansible win_ping
+        run: |
+          cd juju4.harden_windows
+          ansible -i inventory -m win_ping -vvv localhost
+        continue-on-error: true
+      - name: Set inventory for winrm http
+        run: |
+          echo "localhost ansible_user=$env:winrm_user ansible_password=$env:winrm_password ansible_connection=winrm ansible_winrm_scheme=http" | Out-File -FilePath juju4.harden_windows\inventory
+          Set-Item -Path WSMan:\localhost\Service\AllowUnencrypted -Value $true
+        shell: pwsh
+      - name: Ansible win_ping http
+        run: |
+          cd juju4.harden_windows
+          ansible -i inventory -m win_ping -vvv localhost
+      - name: run test
+        run: |
+          cd juju4.harden_windows && ansible-playbook -i inventory -vvv test/integration/default/default.yml
+        env:
+          PY_COLORS: '1'
+          ANSIBLE_FORCE_COLOR: '1'
+      - name: idempotency run
+        run: |
+          cd juju4.harden_windows && ansible-playbook -i inventory -vvv test/integration/default/default.yml | tee /tmp/idempotency.log | grep -q 'changed=0.*failed=0'  && (echo 'Idempotence test: pass' && exit 0)  || (echo 'Idempotence test: fail' && cat /tmp/idempotency.log && exit 0)
+        continue-on-error: true
+      - name: After script
+        run: |
+          Get-ChildItem -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.hta" -Recurse
+          Get-PSDrive -PSProvider Registry
+          New-PSDrive -Name HKCR -PSProvider Registry -Root Registry::HKEY_CLASSES_ROOT
+          Get-ChildItem -Path "HKCR:\htafile\shell\open\command" -Recurse
+          Get-Content -Path C:\windows\Logs\CBS\CBS.log
+          Get-ChildItem -Path "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\ProfileList"
+          New-PSDrive -Name HKU -PSProvider Registry -Root Registry::HKEY_USERS
+          Get-ChildItem -Path "HKU:\*\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.hta" -Recurse
+          Get-ChildItem -Path "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\SSL 2.0\Server"
+        shell: pwsh
+        continue-on-error: true

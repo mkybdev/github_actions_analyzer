@@ -1,0 +1,27 @@
+name: ci
+on:
+  push:
+  pull_request:
+  schedule:
+  - cron: '0 2 * * *'
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - java: 8
+          - java: 11
+          - java: 21
+    steps:
+    - uses: actions/setup-java@v4
+      with:
+        java-version: ${{matrix.java}}
+        distribution: temurin
+    - uses: actions/checkout@v4
+    - uses: coursier/cache-action@v6
+    - run: |
+        export TZ=Australia/Canberra
+        ./sbt -v scalafmtSbtCheck scalafmtCheckAll test

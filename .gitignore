@@ -164,3 +164,4 @@ github_actions_analyzer.code-workspace
 .vscode
 
 out/
+backup/

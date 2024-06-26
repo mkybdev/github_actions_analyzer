@@ -4,7 +4,7 @@ import pickle
 import random
 import re
 
-import graphviz
+import graphviz # type: ignore
 import yaml  # type: ignore
 import yamlcore  # type: ignore
 from appdirs import user_cache_dir  # type: ignore
@@ -100,7 +100,7 @@ def load(
                     format="png",
                 )
                 s.render(cleanup=True, quiet=True)
-            except:
+            except Exception as e:
                 err += 1
                 continue
             if i == 30:

@@ -1,13 +1,15 @@
+import os
+import re
+
+import graphviz
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import os
-import graphviz
-import re
+from tqdm import tqdm
 
-from ..common import export_df, export_image, logger, constants
-from .utils import nest, nol
+from ..common import constants, export_df, export_image, logger
 from ..visualizer import visualize
+from .utils import nest, nol
 
 
 class Statistics:
@@ -41,60 +43,83 @@ class Statistics:
         export_image(fig, name, "statistics", quiet=True)
 
     def run(self):
-        nol_res = nol(self.df)
+        stat_nol, data_nol, outliner_nol = nol(self.df)
         stat_nest, data_nest, outlier_nest = nest(self.df)
-        export_df(nol_res[0], "statistics", "nol", quiet=True, index=True)
+        export_df(stat_nol, "statistics", "nol", quiet=True, index=True)
         export_df(stat_nest, "statistics", "nest", quiet=True, index=True)
-        if not outlier_nest.empty:
-            export_df(
-                outlier_nest, "statistics", "outlier_nest", quiet=True, index=True
-            )
-            nest_path = os.path.join(
-                constants.OUTPUT_PATH, "statistics", "outlier_nest"
-            )
-            if os.path.exists(nest_path):
-                for file in os.listdir(nest_path):
-                    os.remove(os.path.join(nest_path, file))
-            i = 1
-            err = 0
-            for _, row in outlier_nest.iterrows():
-                yml_data = row.drop(['nest_depth']).dropna().to_dict()
-                gv = visualize(yml_data, str(i))
-                try:
-                    s = graphviz.Source(
-                        gv,
-                        directory=nest_path,
-                        format="png",
-                    )
-                    s.render(cleanup=True, quiet=True)
-                except Exception as e:
-                    err += 1
-                    continue
-                if i == 30:
-                    break
-                i += 1
-            for file in os.listdir(nest_path):
-                if re.match(r"Source.gv\.\d+\.png", file):
-                    os.rename(
-                        os.path.join(nest_path, file),
-                        os.path.join(
-                            nest_path,
-                            file.split(".")[2] + ".png",
-                        ),
-                    )
-                elif re.match(r"Source.gv.png", file):
-                    os.rename(
-                        os.path.join(nest_path, file),
-                        os.path.join(nest_path, "1.png"),
-                    )
-            if err > 0:
-                logger.info(f"Skipped {err} files, failed to visualize.")
+        for outlier, name, col in zip(
+            [outliner_nol, outlier_nest],
+            ["outlier_nol", "outlier_nest"],
+            ["number_of_lines", "nest_depth"],
+        ):
+            if not outlier.empty:
+                outlier = outlier.join(
+                    pd.DataFrame(
+                        (data_nest if col == "number_of_lines" else data_nol).loc[
+                            outlier.index
+                        ],
+                        columns=[
+                            (
+                                "nest_depth"
+                                if col == "number_of_lines"
+                                else "number_of_lines"
+                            )
+                        ],
+                    ),
+                    how="outer",
+                )
+                export_df(outlier, "statistics", name, quiet=True, index=True)
+                # outlier_path = os.path.join(constants.OUTPUT_PATH, "statistics", name)
+                # if os.path.exists(outlier_path):
+                #     for file in os.listdir(outlier_path):
+                #         os.remove(os.path.join(outlier_path, file))
+                # i = 1
+                # err = 0
+                # for index, row in tqdm(
+                #     outlier.iterrows(), desc="VISUALIZING OUTLIERS OF " + col
+                # ):
+                #     yml_data = row.drop([col]).dropna().to_dict()
+                #     gv = visualize(yml_data, str(i))
+                #     try:
+                #         s = graphviz.Source(
+                #             gv,
+                #             directory=outlier_path,
+                #             format="png",
+                #         )
+                #         s.render(cleanup=True, quiet=True)
+                #     except Exception as e:
+                #         # print(e)
+                #         err += 1
+                #         continue
+                #     i += 1
+                #     os.rename(
+                #         os.path.join(outlier_path, "Source.gv.png"),
+                #         os.path.join(
+                #             outlier_path,
+                #             str(index) + ".png",
+                #         ),
+                #     )
+                #     print(os.path.join(outlier_path, "Source.gv"))
+                #     if os.path.exists(os.path.join(outlier_path, "Source.gv")):
+                #         print("test")
+                #         try:
+                #             os.remove(os.path.join(outlier_path, "Source.gv"))
+                #         except Exception as e:
+                #             print(e)
+                #     if os.path.exists(os.path.join(outlier_path, "Source.gv.png")):
+                #         print("test")
+                #         try:
+                #             os.remove(os.path.join(outlier_path, "Source.gv.png"))
+                #         except Exception as e:
+                #             print(e)
+                # if err > 0:
+                #     logger.info(f"Skipped {err} files, failed to visualize.")
         self.histogram(
-            nol_res[1],
+            data_nol,
             "nol",
             "Number of Lines",
             "Frequency",
-            f"Number of Lines of Workflow Files (N = {len(nol_res[1])})",
+            f"Number of Lines of Workflow Files (N = {len(data_nol)})",
             log=True,
         )
         self.histogram(

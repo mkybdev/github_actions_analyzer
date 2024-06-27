@@ -15,7 +15,7 @@ def count_nest(s: pd.Series) -> pd.Series:
 
 def nest(df: pd.DataFrame) -> list[pd.Series | pd.DataFrame]:
     max_df = df.apply(count_nest, axis=1).apply(max, axis=1)
-    outlier = max_df.quantile(0.95)
+    outlier = max_df.quantile(0.99)
     outlier_df = max_df[max_df > outlier].rename("nest_depth").to_frame()
     if not outlier_df.empty:
         outlier_df = pd.concat([outlier_df, df.loc[outlier_df.index]], axis=1)
@@ -44,11 +44,10 @@ def count_nol(el, level: int = 0) -> int:
         return 1
 
 
-def nol(df: pd.DataFrame) -> list[pd.Series]:
-    return [
-        df.apply(lambda x: x.apply(count_nol), axis=1)
-        .apply(sum, axis=1)
-        .describe()
-        .rename("number_of_lines"),
-        df.apply(lambda x: x.apply(count_nol), axis=1).apply(sum, axis=1),
-    ]
+def nol(df: pd.DataFrame) -> list[pd.Series | pd.DataFrame]:
+    max_df = df.apply(lambda x: x.apply(count_nol), axis=1).apply(sum, axis=1)
+    outlier = max_df.quantile(0.99)
+    outlier_df = max_df[max_df > outlier].rename("number_of_lines").to_frame()
+    if not outlier_df.empty:
+        outlier_df = pd.concat([outlier_df, df.loc[outlier_df.index]], axis=1)
+    return [max_df.describe().rename("number_of_lines"), max_df, outlier_df]

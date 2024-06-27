@@ -45,24 +45,29 @@ def render(ast, name):
                     last = child
 
             else:
-                lab += str(key) + ": " + str(val) + "\\n"
+                # lab += str(key) + ": " + str(val) + "\\n"
+                lab += str(key) + ": " + str(val)
 
     else:
         lab += str(ast)
 
     # output vertex
-    out(name + asAttr("label", lab) + ";\n")
+    # out(name + asAttr("label", lab) + ";\n")
+    out(name + asAttr("label", lab) + ";")
 
     # output edges
     for src, dest, attr in edges:
-        out(src + " -> " + dest + attr + ";\n")
+        # out(src + " -> " + dest + attr + ";\n")
+        out(src + " -> " + dest + attr + ";")
 
 
 def visualize(ast, name: str):
-    out("digraph graphname {\n")
+    # out("digraph graphname {\n")
+    out("digraph graphname {")
 
     render(ast, name)
 
-    out("}\n")
+    # out("}\n")
+    out("}")
     global output
     return output
